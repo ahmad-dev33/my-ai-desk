@@ -15,6 +15,7 @@
 | `scripts/` | توليد الإعدادات وتسجيل Webhooks ومزامنة المصادر |
 
 تفاصيل الملكية والقرارات المعمارية موجودة في [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+المهام المنجزة والمؤجلة وترتيب التنفيذ موجودة في [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## المتطلبات
 
