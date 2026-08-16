@@ -56,6 +56,35 @@ create_or_update_client typebot false "$KEYCLOAK_TYPEBOT_CLIENT_SECRET" \
   "[\"${FLOWS_BASE}/api/auth/callback/custom-oauth\"]" \
   "[\"${FLOWS_BASE}\"]"
 
+typebot_client_response="$($KC get clients -r unified -q clientId=typebot --fields id)"
+typebot_client_id=""
+if [[ "$typebot_client_response" =~ \"id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+  typebot_client_id="${BASH_REMATCH[1]}"
+fi
+if [[ -z "$typebot_client_id" ]]; then
+  echo "Unable to resolve the Typebot client UUID." >&2
+  exit 1
+fi
+
+# Typebot's custom OAuth adapter expects an `id` profile field, while OIDC
+# exposes the stable user identifier as `sub`. Publish Keycloak's user ID as
+# an additional `id` claim in every token/profile response.
+mapper_response="$($KC get "clients/$typebot_client_id/protocol-mappers/models" -r unified \
+  -q name=typebot-user-id --fields id 2>/dev/null)"
+if [[ ! "$mapper_response" =~ \"id\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then
+  "$KC" create "clients/$typebot_client_id/protocol-mappers/models" -r unified \
+    -s name=typebot-user-id \
+    -s protocol=openid-connect \
+    -s protocolMapper=oidc-usermodel-property-mapper \
+    -s 'config."user.attribute"=id' \
+    -s 'config."claim.name"=id' \
+    -s 'config."jsonType.label"=String' \
+    -s 'config."id.token.claim"=true' \
+    -s 'config."access.token.claim"=true' \
+    -s 'config."userinfo.token.claim"=true' \
+    -s 'config."introspection.token.claim"=true'
+fi
+
 create_realm_role() {
   local role_name="$1"
   if ! "$KC" get "roles/$role_name" -r unified >/dev/null 2>&1; then

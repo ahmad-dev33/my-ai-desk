@@ -46,4 +46,12 @@ if ($LASTEXITCODE -eq 0 -and ($oidcProbe | Select-Object -Last 1) -eq '200') {
   $failed = $true
 }
 
+$mapperConfigCount = docker compose exec -T postgres psql -U postgres -d keycloak -tAc "SELECT count(*) FROM protocol_mapper pm JOIN client c ON c.id=pm.client_id JOIN protocol_mapper_config cfg ON cfg.protocol_mapper_id=pm.id WHERE c.client_id='typebot' AND pm.name='typebot-user-id' AND ((cfg.name='claim.name' AND cfg.value='id') OR (cfg.name='user.attribute' AND cfg.value='id') OR (cfg.name IN ('id.token.claim','access.token.claim','userinfo.token.claim') AND cfg.value='true'));"
+if ($LASTEXITCODE -eq 0 -and [int]$mapperConfigCount -eq 5) {
+  '[PASS] Keycloak -> Typebot profile id mapper: configured'
+} else {
+  "[FAIL] Keycloak -> Typebot profile id mapper: expected 5 settings, got $mapperConfigCount"
+  $failed = $true
+}
+
 if ($failed) { exit 1 }
