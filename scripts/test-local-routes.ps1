@@ -36,4 +36,14 @@ foreach ($check in $checks) {
   if (-not $ok) { $failed = $true }
 }
 
+$portSuffix = if ($settings.PUBLIC_PORT_SUFFIX) { $settings.PUBLIC_PORT_SUFFIX } else { '' }
+$issuer = "${scheme}://auth.${domain}${portSuffix}/realms/unified/.well-known/openid-configuration"
+$oidcProbe = docker compose exec -T typebot-builder node -e "fetch('$issuer').then(r=>{console.log(r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e.cause?.code||e.message);process.exit(1)})"
+if ($LASTEXITCODE -eq 0 -and ($oidcProbe | Select-Object -Last 1) -eq '200') {
+  '[PASS] Typebot -> Keycloak OIDC: HTTP 200'
+} else {
+  "[FAIL] Typebot -> Keycloak OIDC: $oidcProbe"
+  $failed = $true
+}
+
 if ($failed) { exit 1 }

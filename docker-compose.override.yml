@@ -1,0 +1,14 @@
+# Local Docker Desktop networking. Docker Compose loads this file automatically
+# for development; production commands use explicit -f files and exclude it.
+services:
+  typebot-builder:
+    extra_hosts:
+      - "auth.${BASE_DOMAIN:-localhost}:host-gateway"
+
+  typebot-viewer:
+    extra_hosts:
+      - "auth.${BASE_DOMAIN:-localhost}:host-gateway"
+
+  control-plane:
+    extra_hosts:
+      - "auth.${BASE_DOMAIN:-localhost}:host-gateway"
