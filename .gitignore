@@ -1,0 +1,10 @@
+.env
+downloads/
+data/
+upstreams/
+*.log
+node_modules/
+dist/
+.coverage/
+.docker-*
+.watcher-*

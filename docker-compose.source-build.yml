@@ -1,0 +1,27 @@
+# Optional: build application images from real fork clones kept outside this product's Git history.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.source-build.yml up -d --build
+services:
+  chatwoot-migrate: &chatwoot-source
+    image: unified/chatwoot:dev
+    build:
+      context: ${CHATWOOT_SOURCE_PATH:-./upstreams/chatwoot}
+      dockerfile: docker/Dockerfile
+  chatwoot-brand:
+    <<: *chatwoot-source
+  chatwoot-web:
+    <<: *chatwoot-source
+  chatwoot-sidekiq:
+    <<: *chatwoot-source
+
+  typebot-builder:
+    image: unified/typebot-builder:dev
+    build:
+      context: ${TYPEBOT_SOURCE_PATH:-./upstreams/typebot}
+      args:
+        SCOPE: builder
+  typebot-viewer:
+    image: unified/typebot-viewer:dev
+    build:
+      context: ${TYPEBOT_SOURCE_PATH:-./upstreams/typebot}
+      args:
+        SCOPE: viewer

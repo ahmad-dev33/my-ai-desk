@@ -1,0 +1,420 @@
+name: unified-ai-desk
+
+x-chatwoot: &chatwoot
+  image: chatwoot/chatwoot:${CHATWOOT_VERSION:-v4.16.2-ce}
+  restart: unless-stopped
+  env_file: .env
+  environment: &chatwoot-env
+    NODE_ENV: production
+    RAILS_ENV: production
+    INSTALLATION_ENV: docker
+    FRONTEND_URL: ${PUBLIC_SCHEME:-https}://inbox.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+    FORCE_SSL: ${CHATWOOT_FORCE_SSL:-true}
+    ENABLE_ACCOUNT_SIGNUP: "false"
+    SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
+    ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY: ${CHATWOOT_ACTIVE_RECORD_PRIMARY_KEY}
+    ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY: ${CHATWOOT_ACTIVE_RECORD_DETERMINISTIC_KEY}
+    ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT: ${CHATWOOT_ACTIVE_RECORD_SALT}
+    POSTGRES_HOST: postgres
+    POSTGRES_DATABASE: chatwoot
+    POSTGRES_USERNAME: postgres
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    REDIS_PASSWORD: ${REDIS_PASSWORD}
+    ACTIVE_STORAGE_SERVICE: s3_compatible
+    STORAGE_BUCKET_NAME: chatwoot
+    STORAGE_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
+    STORAGE_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
+    STORAGE_REGION: us-east-1
+    STORAGE_ENDPOINT: ${PUBLIC_SCHEME:-https}://assets.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+    STORAGE_FORCE_PATH_STYLE: "true"
+    MAILER_SENDER_EMAIL: ${SMTP_FROM}
+    SMTP_ADDRESS: ${SMTP_HOST}
+    SMTP_PORT: ${SMTP_PORT}
+    SMTP_USERNAME: ${SMTP_USERNAME:-unused}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-unused}
+    SMTP_ENABLE_STARTTLS_AUTO: "true"
+    DEFAULT_LOCALE: ar
+  volumes:
+    - chatwoot-storage:/app/storage
+  networks: [backend, proxy]
+
+x-typebot: &typebot
+  restart: unless-stopped
+  env_file: .env
+  environment: &typebot-env
+    DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/typebot
+    REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
+    ENCRYPTION_SECRET: ${TYPEBOT_ENCRYPTION_SECRET}
+    NODE_OPTIONS: --no-node-snapshot
+    HOSTNAME: 0.0.0.0
+    NEXTAUTH_URL: ${PUBLIC_SCHEME:-https}://flows.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+    NEXT_PUBLIC_VIEWER_URL: ${PUBLIC_SCHEME:-https}://bot.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+    ADMIN_EMAIL: ${TYPEBOT_ADMIN_EMAIL}
+    DISABLE_SIGNUP: ${TYPEBOT_DISABLE_SIGNUP:-false}
+    DEFAULT_WORKSPACE_PLAN: UNLIMITED
+    CUSTOM_OAUTH_CLIENT_ID: typebot
+    CUSTOM_OAUTH_CLIENT_SECRET: ${KEYCLOAK_TYPEBOT_CLIENT_SECRET}
+    CUSTOM_OAUTH_ISSUER: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/realms/unified
+    CUSTOM_OAUTH_NAME: ${BRAND_NAME}
+    SMTP_HOST: ${SMTP_HOST}
+    SMTP_PORT: ${SMTP_PORT}
+    SMTP_USERNAME: ${SMTP_USERNAME:-unused}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-unused}
+    SMTP_SECURE: ${SMTP_SECURE:-false}
+    NEXT_PUBLIC_SMTP_FROM: ${SMTP_FROM}
+    S3_ACCESS_KEY: ${MINIO_ROOT_USER}
+    S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+    S3_BUCKET: typebot
+    S3_ENDPOINT: assets.${BASE_DOMAIN}
+    S3_PORT: ${S3_PUBLIC_PORT:-443}
+    S3_SSL: ${S3_PUBLIC_SSL:-true}
+    S3_REGION: us-east-1
+    S3_PUBLIC_CUSTOM_DOMAIN: ${PUBLIC_SCHEME:-https}://assets.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+  networks: [backend, proxy]
+
+services:
+  traefik:
+    image: traefik:v3.7
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=unified-ai-desk_proxy
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --accesslog=true
+      - --api.dashboard=false
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_HTTPS_PORT:-443}:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks: [proxy]
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [backend]
+
+  postgres-init:
+    image: postgres:16-alpine
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      PGHOST: postgres
+      PGUSER: postgres
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        for database in chatwoot typebot keycloak control_plane; do
+          if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$${database}'" | grep -q 1; then
+            createdb "$${database}"
+          fi
+        done
+    networks: [backend]
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: [redis-server, --appendonly, "yes", --requirepass, "${REDIS_PASSWORD}"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    networks: [backend]
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [backend, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.minio.rule: Host(`assets.${BASE_DOMAIN}`)
+      traefik.http.routers.minio.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.minio.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.minio.loadbalancer.server.port: "9000"
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing local/chatwoot
+        mc mb --ignore-existing local/typebot
+        mc anonymous set download local/typebot
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    networks: [backend]
+
+  chatwoot-migrate:
+    <<: *chatwoot
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    entrypoint: docker/entrypoints/rails.sh
+    command: [bundle, exec, rails, db:chatwoot_prepare]
+
+  chatwoot-brand:
+    <<: *chatwoot
+    restart: "no"
+    depends_on:
+      chatwoot-migrate: {condition: service_completed_successfully}
+    environment:
+      <<: *chatwoot-env
+      BRAND_NAME: ${BRAND_NAME}
+      BASE_DOMAIN: ${BASE_DOMAIN}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
+      PUBLIC_PORT_SUFFIX: ${PUBLIC_PORT_SUFFIX:-}
+    entrypoint: docker/entrypoints/rails.sh
+    command:
+      - bundle
+      - exec
+      - rails
+      - runner
+      - |
+        values = {
+          'INSTALLATION_NAME' => ENV.fetch('BRAND_NAME'),
+          'BRAND_NAME' => ENV.fetch('BRAND_NAME'),
+          'BRAND_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
+          'WIDGET_BRAND_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
+          'LOGO' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/brand/logo.svg",
+          'LOGO_DARK' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/brand/logo-dark.svg",
+          'LOGO_THUMBNAIL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/favicon.svg",
+          'DISPLAY_MANIFEST' => false,
+          'LOGOUT_REDIRECT_LINK' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}"
+        }
+        values.each do |name, value|
+          config = InstallationConfig.find_or_initialize_by(name: name)
+          config.value = value
+          config.save!
+        end
+        puts 'Chatwoot development branding applied.'
+
+  chatwoot-web:
+    <<: *chatwoot
+    depends_on:
+      chatwoot-brand: {condition: service_completed_successfully}
+      minio-init: {condition: service_completed_successfully}
+    entrypoint: docker/entrypoints/rails.sh
+    command: [bundle, exec, rails, s, -p, "3000", -b, 0.0.0.0]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.chatwoot.rule: Host(`inbox.${BASE_DOMAIN}`)
+      traefik.http.routers.chatwoot.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.chatwoot.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.chatwoot.loadbalancer.server.port: "3000"
+      traefik.http.middlewares.chatwoot-frame.headers.customresponseheaders.X-Frame-Options: ""
+      traefik.http.middlewares.chatwoot-frame.headers.customresponseheaders.Content-Security-Policy: "frame-ancestors ${PUBLIC_SCHEME:-https}://dashboard.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}"
+      traefik.http.routers.chatwoot.middlewares: chatwoot-frame
+
+  chatwoot-sidekiq:
+    <<: *chatwoot
+    depends_on:
+      chatwoot-brand: {condition: service_completed_successfully}
+    command: [bundle, exec, sidekiq, -C, config/sidekiq.yml]
+
+  typebot-builder:
+    <<: *typebot
+    image: baptistearno/typebot-builder:${TYPEBOT_VERSION:-v3.17.1}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.typebot-builder.rule: Host(`flows.${BASE_DOMAIN}`)
+      traefik.http.routers.typebot-builder.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.typebot-builder.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.typebot-builder.loadbalancer.server.port: "3000"
+      traefik.http.middlewares.typebot-frame.headers.customresponseheaders.X-Frame-Options: ""
+      traefik.http.middlewares.typebot-frame.headers.customresponseheaders.Content-Security-Policy: "frame-ancestors ${PUBLIC_SCHEME:-https}://dashboard.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}"
+      traefik.http.routers.typebot-builder.middlewares: typebot-frame
+
+  typebot-viewer:
+    <<: *typebot
+    image: baptistearno/typebot-viewer:${TYPEBOT_VERSION:-v3.17.1}
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.typebot-viewer.rule: Host(`bot.${BASE_DOMAIN}`)
+      traefik.http.routers.typebot-viewer.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.typebot-viewer.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.typebot-viewer.loadbalancer.server.port: "3000"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.6.3}
+    restart: unless-stopped
+    command: [start, --http-enabled=true, --proxy-headers=xforwarded]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KC_HOSTNAME: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+    networks: [backend, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.keycloak.rule: Host(`auth.${BASE_DOMAIN}`)
+      traefik.http.routers.keycloak.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.keycloak.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.keycloak.loadbalancer.server.port: "8080"
+
+  keycloak-init:
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.6.3}
+    restart: "no"
+    depends_on: [keycloak]
+    entrypoint: /bin/bash
+    command: /opt/bootstrap/init-keycloak.sh
+    environment:
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KEYCLOAK_USER_EMAIL: ${KEYCLOAK_USER_EMAIL}
+      KEYCLOAK_USER_PASSWORD: ${KEYCLOAK_USER_PASSWORD}
+      KEYCLOAK_TYPEBOT_CLIENT_SECRET: ${KEYCLOAK_TYPEBOT_CLIENT_SECRET}
+      BASE_DOMAIN: ${BASE_DOMAIN}
+      PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
+      PUBLIC_PORT_SUFFIX: ${PUBLIC_PORT_SUFFIX:-}
+    volumes:
+      - ./infra/keycloak/init-keycloak.sh:/opt/bootstrap/init-keycloak.sh:ro
+    networks: [backend]
+
+  control-plane:
+    build: ./control-plane
+    restart: unless-stopped
+    depends_on:
+      postgres-init: {condition: service_completed_successfully}
+      keycloak-init: {condition: service_completed_successfully}
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/control_plane
+      OIDC_ISSUER: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/realms/unified
+      OIDC_JWKS_URL: http://keycloak:8080/realms/unified/protocol/openid-connect/certs
+      OIDC_CLIENT_ID: unified-dashboard
+      CORS_ORIGIN: ${PUBLIC_SCHEME:-https}://dashboard.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+      AUTH_DISABLED: "false"
+    healthcheck:
+      test: [CMD, wget, -qO-, http://127.0.0.1:3000/health/ready]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    networks: [backend, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.control-plane.rule: Host(`api.${BASE_DOMAIN}`)
+      traefik.http.routers.control-plane.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.control-plane.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.control-plane.loadbalancer.server.port: "3000"
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        VITE_BRAND_NAME: ${BRAND_NAME}
+        VITE_BRAND_PRIMARY: ${BRAND_PRIMARY}
+        VITE_BASE_DOMAIN: ${BASE_DOMAIN}
+        VITE_PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
+        VITE_PUBLIC_PORT_SUFFIX: ${PUBLIC_PORT_SUFFIX:-}
+        VITE_API_URL: ${PUBLIC_SCHEME:-https}://api.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+    restart: unless-stopped
+    depends_on:
+      control-plane: {condition: service_healthy}
+    networks: [proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.dashboard.rule: Host(`dashboard.${BASE_DOMAIN}`)
+      traefik.http.routers.dashboard.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.dashboard.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.dashboard.loadbalancer.server.port: "80"
+
+  bridge:
+    build: ./bridge
+    profiles: [automation]
+    restart: unless-stopped
+    depends_on:
+      chatwoot-web: {condition: service_started}
+      typebot-viewer: {condition: service_started}
+      redis: {condition: service_healthy}
+    environment:
+      PORT: "3000"
+      WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET}
+      CHATWOOT_BASE_URL: http://chatwoot-web:3000
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
+      CHATWOOT_TOKENS_JSON: ${CHATWOOT_TOKENS_JSON}
+      TYPEBOT_BASE_URL: http://typebot-viewer:3000
+      TYPEBOT_PUBLIC_ID: ${TYPEBOT_PUBLIC_ID}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/2
+      SESSION_TTL_SECONDS: "604800"
+    networks: [backend, proxy]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.bridge.rule: Host(`hooks.${BASE_DOMAIN}`) && Path(`/webhooks/chatwoot`)
+      traefik.http.routers.bridge.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.bridge.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.services.bridge.loadbalancer.server.port: "3000"
+
+networks:
+  backend:
+    internal: true
+  proxy:
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+  chatwoot-storage:
+  traefik-letsencrypt:

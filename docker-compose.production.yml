@@ -1,0 +1,27 @@
+# Adds public TLS certificate resolvers to the base stack.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+services:
+  minio:
+    labels:
+      traefik.http.routers.minio.tls.certresolver: letsencrypt
+  chatwoot-web:
+    labels:
+      traefik.http.routers.chatwoot.tls.certresolver: letsencrypt
+  typebot-builder:
+    labels:
+      traefik.http.routers.typebot-builder.tls.certresolver: letsencrypt
+  typebot-viewer:
+    labels:
+      traefik.http.routers.typebot-viewer.tls.certresolver: letsencrypt
+  keycloak:
+    labels:
+      traefik.http.routers.keycloak.tls.certresolver: letsencrypt
+  control-plane:
+    labels:
+      traefik.http.routers.control-plane.tls.certresolver: letsencrypt
+  dashboard:
+    labels:
+      traefik.http.routers.dashboard.tls.certresolver: letsencrypt
+  bridge:
+    labels:
+      traefik.http.routers.bridge.tls.certresolver: letsencrypt

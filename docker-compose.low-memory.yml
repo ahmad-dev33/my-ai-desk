@@ -1,0 +1,49 @@
+services:
+  chatwoot-web:
+    environment:
+      WEB_CONCURRENCY: "1"
+      RAILS_MAX_THREADS: "3"
+      MALLOC_ARENA_MAX: "2"
+    mem_limit: 512m
+
+  chatwoot-sidekiq:
+    environment:
+      SIDEKIQ_CONCURRENCY: "5"
+      MALLOC_ARENA_MAX: "2"
+    mem_limit: 512m
+
+  typebot-builder:
+    environment:
+      NODE_OPTIONS: --no-node-snapshot --max-old-space-size=384
+    mem_limit: 640m
+
+  typebot-viewer:
+    environment:
+      NODE_OPTIONS: --no-node-snapshot --max-old-space-size=256
+    mem_limit: 384m
+
+  keycloak:
+    environment:
+      JAVA_OPTS_KC_HEAP: -Xms128m -Xmx320m
+    mem_limit: 512m
+
+  minio:
+    mem_limit: 384m
+
+  postgres:
+    mem_limit: 384m
+
+  redis:
+    mem_limit: 128m
+
+  traefik:
+    mem_limit: 128m
+
+  control-plane:
+    mem_limit: 192m
+
+  dashboard:
+    mem_limit: 64m
+
+  bridge:
+    mem_limit: 192m

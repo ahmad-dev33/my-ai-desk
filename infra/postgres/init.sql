@@ -1,0 +1,4 @@
+CREATE DATABASE chatwoot;
+CREATE DATABASE typebot;
+CREATE DATABASE keycloak;
+CREATE DATABASE control_plane;
