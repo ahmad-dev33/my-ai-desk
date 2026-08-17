@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>تهيئة جلسة الأتمتة</title>
+    <style>
+      body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, sans-serif; background: #f5f7fb; color: #172033; }
+      main { text-align: center; }
+    </style>
+  </head>
+  <body>
+    <main><h1>جارٍ تهيئة جلسة الأتمتة…</h1><p>ستعود إلى لوحة التحكم تلقائياً.</p></main>
+    <script>
+      (async () => {
+        const requestedReturn = new URLSearchParams(location.search).get('return');
+        if (requestedReturn) sessionStorage.setItem('unified-dashboard-return', requestedReturn);
+        const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+        if (!csrfResponse.ok) throw new Error('Unable to obtain Typebot CSRF token');
+        const { csrfToken } = await csrfResponse.json();
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/api/auth/signin/custom-oauth';
+        for (const [name, value] of Object.entries({
+          csrfToken,
+          callbackUrl: `${location.origin}/sso/complete.html`,
+        })) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        }
+        document.body.appendChild(form);
+        form.submit();
+      })().catch(() => {
+        const target = sessionStorage.getItem('unified-dashboard-return');
+        if (target) location.replace(`${target}${target.includes('?') ? '&' : '?'}sso=typebot-error`);
+      });
+    </script>
+  </body>
+</html>
+

@@ -10,6 +10,7 @@ const publicScheme = import.meta.env.VITE_PUBLIC_SCHEME || 'https';
 const publicPortSuffix = import.meta.env.VITE_PUBLIC_PORT_SUFFIX || '';
 const serviceUrl = (subdomain) => `${publicScheme}://${subdomain}.${baseDomain}${publicPortSuffix}`;
 const apiBase = import.meta.env.VITE_API_URL || serviceUrl('api');
+const typebotSsoMarker = 'unified-typebot-sso-ready';
 
 const keycloak = new Keycloak({
   url: serviceUrl('auth'),
@@ -133,7 +134,29 @@ function App() {
     document.documentElement.style.setProperty('--primary', primary);
     document.title = brand;
     keycloak.init({ onLoad: 'login-required', pkceMethod: 'S256', checkLoginIframe: false })
-      .then((authenticated) => authenticated ? setReady(true) : keycloak.login())
+      .then((authenticated) => {
+        if (!authenticated) return keycloak.login();
+        const ssoResult = new URLSearchParams(location.search).get('sso');
+        if (ssoResult === 'typebot') {
+          sessionStorage.setItem(typebotSsoMarker, 'true');
+          history.replaceState({}, '', '/');
+          setReady(true);
+          return undefined;
+        }
+        if (ssoResult === 'typebot-error') {
+          sessionStorage.setItem(typebotSsoMarker, 'error');
+          history.replaceState({}, '', '/');
+          setReady(true);
+          return undefined;
+        }
+        if (!sessionStorage.getItem(typebotSsoMarker)) {
+          const returnUrl = `${location.origin}/?sso=typebot`;
+          location.replace(`${serviceUrl('flows')}/sso/typebot.html?return=${encodeURIComponent(returnUrl)}`);
+          return undefined;
+        }
+        setReady(true);
+        return undefined;
+      })
       .catch(() => setError('تعذر الاتصال بخدمة تسجيل الدخول. تحقق من DNS وحالة Keycloak.'));
   }, []);
 
