@@ -8,23 +8,23 @@
 - كتالوج المنتجات والأسعار والمخزون لكل متجر.
 - مصادر المعرفة المعزولة لكل متجر وجداول pgvector اللازمة للبحث الدلالي.
 - Bridge أولي لنقل رسالة Chatwoot إلى Typebot ثم إعادة الرد.
+- توجيه Bridge متعدد المتاجر حسب حساب وصندوق Chatwoot مع اختيار تدفق Typebot المنشور.
+- API لإدارة القنوات ونشر نسخ الأتمتة، مع إبقاء الرموز السرية خارج PostgreSQL.
 - وضع تطوير محلي بلا شهادات، ووضع إنتاج مستقل، ورابط ngrok مؤقت لـMeta.
 
 ## قيد التنفيذ
 
-- نقل اختيار التدفق ورموز Chatwoot من متغيرات البيئة إلى Control Plane.
 - إضافة صف أحداث دائم وRetries وDead-letter queue إلى Bridge.
 
 ## التالي
 
-1. جعل Bridge يعتمد على `channel_connections` و`automation_definitions` لكل متجر.
-2. إضافة صف أحداث دائم وRetries وDead-letter queue بدلاً من الذاكرة المحلية.
-3. بناء صفحات أصلية للمتاجر والمنتجات والمعرفة والأتمتة داخل Dashboard.
-4. إضافة AI Service: تقطيع المحتوى، Embeddings، بحث pgvector، سياسة الرد والتحويل للبشر.
-5. توحيد جهات الاتصال والوسوم والحقول المخصصة بين Chatwoot وControl Plane.
-6. ميزات ManyChat: keywords، comment-to-DM، story replies، sequences، broadcasts، segmentation، goals والتحليلات.
-7. تحسين الموارد، النسخ الاحتياطية، المراقبة، Rate limiting، واختبارات الحمل والاستعادة.
-8. إنشاء تطبيق Meta وربط Facebook وInstagram عبر ngrok. **مؤجل بطلب المستخدم حتى يطلب استكماله.**
+1. إضافة صف أحداث دائم وRetries وDead-letter queue بدلاً من الذاكرة المحلية.
+2. بناء صفحات أصلية للمتاجر والمنتجات والمعرفة والأتمتة داخل Dashboard.
+3. إضافة AI Service: تقطيع المحتوى، Embeddings، بحث pgvector، سياسة الرد والتحويل للبشر.
+4. توحيد جهات الاتصال والوسوم والحقول المخصصة بين Chatwoot وControl Plane.
+5. ميزات ManyChat: keywords، comment-to-DM، story replies، sequences، broadcasts، segmentation، goals والتحليلات.
+6. تحسين الموارد، النسخ الاحتياطية، المراقبة، Rate limiting، واختبارات الحمل والاستعادة.
+7. إنشاء تطبيق Meta وربط Facebook وInstagram عبر ngrok. **مؤجل بطلب المستخدم حتى يطلب استكماله.**
 
 ## قرار الوظائف المتكررة
 

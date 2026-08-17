@@ -8,6 +8,7 @@ const config = {
   OIDC_ISSUER: 'https://auth.example.com/realms/unified',
   OIDC_JWKS_URL: 'https://auth.example.com/realms/unified/protocol/openid-connect/certs',
   OIDC_CLIENT_ID: 'unified-dashboard',
+  BRIDGE_SERVICE_SECRET: 'test-bridge-service-secret',
 };
 
 test('health and authenticated identity endpoints respond', async (t) => {

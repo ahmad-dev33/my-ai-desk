@@ -7,6 +7,8 @@ import { contactRoutes } from './routes/contacts.js';
 import { automationRoutes } from './routes/automations.js';
 import { productRoutes } from './routes/products.js';
 import { knowledgeRoutes } from './routes/knowledge.js';
+import { bridgeInternalRoutes } from './routes/bridge-internal.js';
+import { channelRoutes } from './routes/channels.js';
 import { upsertOperator } from './access.js';
 
 export function createApp({ config, db }) {
@@ -29,6 +31,8 @@ export function createApp({ config, db }) {
     res.json({ status: 'ready' });
   });
 
+  app.use('/internal/v1/bridge', bridgeInternalRoutes(db, config.BRIDGE_SERVICE_SECRET));
+
   app.use('/v1', createAuth(config));
   app.get('/v1/me', async (req, res) => {
     const operator = await upsertOperator(db, req.identity);
@@ -39,6 +43,7 @@ export function createApp({ config, db }) {
   app.use('/v1/tenants/:tenantId/automations', automationRoutes(db));
   app.use('/v1/tenants/:tenantId/products', productRoutes(db));
   app.use('/v1/tenants/:tenantId/knowledge', knowledgeRoutes(db));
+  app.use('/v1/tenants/:tenantId/channels', channelRoutes(db));
 
   app.use((error, req, res, _next) => {
     req.log?.error({ err: error }, 'Request failed');

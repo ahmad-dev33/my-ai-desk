@@ -9,6 +9,11 @@ const automationSchema = z.object({
   engineRef: z.string().trim().max(255).optional().nullable(),
 });
 
+const publishSchema = z.object({
+  engineRef: z.string().trim().min(1).max(255),
+  definitionSnapshot: z.record(z.string(), z.unknown()).default({}),
+});
+
 export function automationRoutes(db) {
   const router = Router({ mergeParams: true });
 
@@ -30,6 +35,35 @@ export function automationRoutes(db) {
       [req.params.tenantId, input.name, input.description, input.engine, input.engineRef, req.identity.subject],
     );
     res.status(201).json({ data: result.rows[0] });
+  });
+
+  router.post('/:automationId/publish', async (req, res) => {
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'automation-editor']);
+    const input = publishSchema.parse(req.body);
+    const automation = await db.transaction(async (client) => {
+      const current = await client.query(
+        `SELECT * FROM automation_definitions
+         WHERE id = $1 AND tenant_id = $2 FOR UPDATE`,
+        [req.params.automationId, req.params.tenantId],
+      );
+      if (!current.rowCount) return null;
+      const version = current.rows[0].current_version + 1;
+      const updated = await client.query(
+        `UPDATE automation_definitions SET status = 'published', engine_ref = $3,
+           current_version = $4, updated_at = now()
+         WHERE id = $1 AND tenant_id = $2 RETURNING *`,
+        [req.params.automationId, req.params.tenantId, input.engineRef, version],
+      );
+      await client.query(
+        `INSERT INTO automation_versions
+         (automation_id, version, engine_ref, definition_snapshot, published_by_subject, published_at)
+         VALUES ($1, $2, $3, $4, $5, now())`,
+        [req.params.automationId, version, input.engineRef, input.definitionSnapshot, req.identity.subject],
+      );
+      return updated.rows[0];
+    });
+    if (!automation) return res.status(404).json({ error: 'automation_not_found' });
+    return res.json({ data: automation });
   });
 
   return router;

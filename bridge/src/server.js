@@ -3,11 +3,12 @@ import { pathToFileURL } from 'node:url';
 import express from 'express';
 import { createClient } from 'redis';
 import { extractTypebotReplies } from './replies.js';
+import { getIncomingMessage } from './webhook.js';
 export { extractTypebotReplies } from './replies.js';
 
 const required = [
-  'WEBHOOK_SHARED_SECRET', 'CHATWOOT_BASE_URL', 'CHATWOOT_API_TOKEN',
-  'TYPEBOT_BASE_URL', 'TYPEBOT_PUBLIC_ID', 'REDIS_URL',
+  'WEBHOOK_SHARED_SECRET', 'CHATWOOT_BASE_URL', 'TYPEBOT_BASE_URL', 'REDIS_URL',
+  'CONTROL_PLANE_BASE_URL', 'CONTROL_PLANE_SERVICE_SECRET',
 ];
 
 const assertConfiguration = () => {
@@ -35,27 +36,13 @@ const fetchJson = async (url, options = {}) => {
   return parsed;
 };
 
-const getIncomingMessage = (body) => {
-  if (body?.event !== 'message_created') return null;
-  const type = body.message_type ?? body.message?.message_type;
-  if (!(type === 'incoming' || type === 0 || type === '0')) return null;
-  if (body.private || body.message?.private) return null;
-
-  const content = body.content ?? body.message?.content;
-  const accountId = body.account?.id ?? body.account_id ?? body.message?.account_id;
-  const conversationId = body.conversation?.id ?? body.conversation_id ?? body.message?.conversation_id;
-  const messageId = body.id ?? body.message?.id;
-  if (!content || !accountId || !conversationId || !messageId) return null;
-  return { content: String(content), accountId: String(accountId), conversationId: String(conversationId), messageId: String(messageId) };
-};
-
 const parseTenantTokens = () => {
   try { return JSON.parse(process.env.CHATWOOT_TOKENS_JSON || '{}'); }
   catch { throw new Error('CHATWOOT_TOKENS_JSON must be a valid JSON object'); }
 };
 
-const startTypebot = (message) => fetchJson(
-  `${process.env.TYPEBOT_BASE_URL}/api/v1/typebots/${encodeURIComponent(process.env.TYPEBOT_PUBLIC_ID)}/startChat`,
+const startTypebot = (publicId, message) => fetchJson(
+  `${process.env.TYPEBOT_BASE_URL}/api/v1/typebots/${encodeURIComponent(publicId)}/startChat`,
   {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -81,6 +68,11 @@ const sendChatwootReply = (accountId, conversationId, content, token) => fetchJs
   },
 );
 
+const getBridgeRoute = (message) => fetchJson(
+  `${process.env.CONTROL_PLANE_BASE_URL}/internal/v1/bridge/routes/chatwoot/${encodeURIComponent(message.accountId)}/inboxes/${encodeURIComponent(message.inboxId)}`,
+  { headers: { 'x-bridge-token': process.env.CONTROL_PLANE_SERVICE_SECRET } },
+).then((response) => response.data);
+
 export async function createServer() {
   assertConfiguration();
   const redis = createClient({ url: process.env.REDIS_URL });
@@ -88,6 +80,10 @@ export async function createServer() {
   await redis.connect();
 
   const tenantTokens = parseTenantTokens();
+  const credentialTokens = (() => {
+    try { return JSON.parse(process.env.BRIDGE_CREDENTIALS_JSON || '{}'); }
+    catch { throw new Error('BRIDGE_CREDENTIALS_JSON must be a valid JSON object'); }
+  })();
   const ttl = Number(process.env.SESSION_TTL_SECONDS || 604800);
   const queues = new Map();
   const app = express();
@@ -99,8 +95,10 @@ export async function createServer() {
     const claimed = await redis.set(idempotencyKey, 'processing', { NX: true, EX: 300 });
     if (!claimed) return { duplicate: true };
 
-    const sessionKey = `bridge:session:${message.accountId}:${message.conversationId}`;
     try {
+      const route = await getBridgeRoute(message);
+      if (!route.typebot_public_id) throw new Error('Bridge route has no published Typebot public ID');
+      const sessionKey = `bridge:session:${route.tenant_id}:${route.channel_connection_id}:${message.conversationId}`;
       let sessionId = await redis.get(sessionKey);
       let typebotResponse;
       if (sessionId) {
@@ -113,12 +111,17 @@ export async function createServer() {
         }
       }
       if (!sessionId) {
-        typebotResponse = await startTypebot(message.content);
+        typebotResponse = await startTypebot(route.typebot_public_id, message.content);
         sessionId = typebotResponse.sessionId;
       }
       if (sessionId) await redis.set(sessionKey, sessionId, { EX: ttl });
 
-      const token = tenantTokens[message.accountId] || process.env.CHATWOOT_API_TOKEN;
+      const token = credentialTokens[route.credential_ref]
+        || tenantTokens[message.accountId]
+        || process.env.CHATWOOT_API_TOKEN;
+      if (!token || token.startsWith('CHANGE_ME')) {
+        throw new Error(`No Chatwoot credential for route ${route.channel_connection_id}`);
+      }
       for (const reply of extractTypebotReplies(typebotResponse)) {
         await sendChatwootReply(message.accountId, message.conversationId, reply, token);
       }
