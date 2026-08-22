@@ -25,3 +25,15 @@ test('channel routing rejects invalid Chatwoot IDs', () => {
   assert.equal(result.success, false);
 });
 
+test('channel config rejects provider secrets and accepts secret references', () => {
+  const rejected = channelSchema.safeParse({
+    provider: 'messenger', externalAccountId: 'page-1', displayName: 'Page',
+    credentialRef: 'meta-page-1', config: { accessToken: 'must-not-enter-the-database' },
+  });
+  assert.equal(rejected.success, false);
+  const accepted = channelSchema.safeParse({
+    provider: 'messenger', externalAccountId: 'page-1', displayName: 'Page',
+    credentialRef: 'meta-page-1', config: { transport: 'graph', chatwootCredentialRef: 'chatwoot-account-1' },
+  });
+  assert.equal(accepted.success, true);
+});

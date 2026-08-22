@@ -10,11 +10,23 @@
     </style>
   </head>
   <body>
-    <main><h1>جارٍ تهيئة جلسة الأتمتة…</h1><p>ستعود إلى لوحة التحكم تلقائياً.</p></main>
+    <main><h1>جارٍ تهيئة جلسة الأتمتة…</h1><p>ستعود إلى My AI Desk تلقائياً.</p></main>
     <script>
       (async () => {
         const requestedReturn = new URLSearchParams(location.search).get('return');
-        if (requestedReturn) sessionStorage.setItem('unified-dashboard-return', requestedReturn);
+        if (requestedReturn) {
+          const returnUrl = new URL(requestedReturn, location.origin);
+          if (returnUrl.origin !== location.origin) throw new Error('Invalid Typebot return origin');
+          sessionStorage.setItem('unified-dashboard-return', returnUrl.href);
+        }
+        const sessionResponse = await fetch('/api/auth/session', { credentials: 'same-origin' });
+        if (sessionResponse.ok) {
+          const session = await sessionResponse.json();
+          if (session?.user) {
+            location.replace('/sso/complete.html');
+            return;
+          }
+        }
         const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
         if (!csrfResponse.ok) throw new Error('Unable to obtain Typebot CSRF token');
         const { csrfToken } = await csrfResponse.json();
@@ -40,4 +52,3 @@
     </script>
   </body>
 </html>
-

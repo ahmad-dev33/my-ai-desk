@@ -45,9 +45,14 @@ $values = @{
   MINIO_ROOT_PASSWORD = New-AlphaSecret 40
   KEYCLOAK_ADMIN_PASSWORD = New-AlphaSecret 40
   KEYCLOAK_USER_EMAIL = $Email
+  KEYCLOAK_USER_CONTACT_EMAIL = $Email
   KEYCLOAK_USER_PASSWORD = New-AlphaSecret 32
   KEYCLOAK_TYPEBOT_CLIENT_SECRET = New-AlphaSecret 48
+  KEYCLOAK_CONTROL_PLANE_CLIENT_SECRET = New-AlphaSecret 48
+  CHATWOOT_PLATFORM_API_TOKEN = New-AlphaSecret 48
   WEBHOOK_SHARED_SECRET = New-AlphaSecret 48
+  META_VERIFY_TOKEN = New-AlphaSecret 48
+  CREDENTIAL_ENCRYPTION_KEY = New-Base64Secret 32
 }
 
 $content = Get-Content -LiteralPath $templatePath -Raw

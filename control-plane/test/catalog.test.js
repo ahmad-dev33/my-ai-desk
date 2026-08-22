@@ -23,9 +23,16 @@ test('URL knowledge sources require a source URI', () => {
   assert.equal(result.error.issues[0].path[0], 'sourceUri');
 });
 
+test('URL knowledge sources require pasted content until safe extraction exists', () => {
+  const result = knowledgeDocumentSchema.safeParse({
+    title: 'المتجر', sourceKind: 'url', sourceUri: 'https://example.com', content: '',
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.error.issues[0].path[0], 'content');
+});
+
 test('text knowledge sources reject empty content', () => {
   const result = knowledgeDocumentSchema.safeParse({ title: 'الأسئلة', sourceKind: 'faq', content: '  ' });
   assert.equal(result.success, false);
   assert.equal(result.error.issues[0].path[0], 'content');
 });
-

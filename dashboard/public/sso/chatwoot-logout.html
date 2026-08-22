@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head><meta charset="utf-8" /><title>تسجيل الخروج من صندوق المحادثات</title></head>
+  <body>
+    <script>
+      (async () => {
+        const cookieValue = document.cookie.split('; ')
+          .find((entry) => entry.startsWith('cw_d_session_info='))?.split('=').slice(1).join('=');
+        if (cookieValue) {
+          try {
+            const auth = JSON.parse(decodeURIComponent(cookieValue));
+            await fetch('/auth/sign_out', {
+              method: 'DELETE',
+              credentials: 'same-origin',
+              headers: {
+                'access-token': auth['access-token'] || '',
+                client: auth.client || '',
+                uid: auth.uid || '',
+              },
+            });
+          } catch (_error) {
+            // Browser state is cleared below even if the remote token already expired.
+          }
+        }
+        for (const name of ['cw_d_session_info', 'auth_data', 'user']) {
+          document.cookie = `${name}=; Max-Age=0; Path=/; SameSite=Lax`;
+        }
+        localStorage.clear();
+        sessionStorage.clear();
+        if (indexedDB.databases) {
+          const databases = await indexedDB.databases().catch(() => []);
+          databases.forEach((database) => database.name && indexedDB.deleteDatabase(database.name));
+        }
+      })().finally(() => {
+        const parentDomain = location.hostname.split('.').slice(1).join('.');
+        const dashboardOrigin = `${location.protocol}//dashboard.${parentDomain}${location.port ? `:${location.port}` : ''}`;
+        parent.postMessage({ type: 'my-ai-desk-engine-logout', engine: 'chatwoot' }, dashboardOrigin);
+      });
+    </script>
+  </body>
+</html>

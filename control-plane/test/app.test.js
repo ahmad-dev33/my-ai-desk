@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from '../src/app.js';
+import { createApp, sanitizeHttpUrl } from '../src/app.js';
 
 const config = {
   AUTH_DISABLED: true,
@@ -10,6 +10,17 @@ const config = {
   OIDC_CLIENT_ID: 'unified-dashboard',
   BRIDGE_SERVICE_SECRET: 'test-bridge-service-secret',
 };
+
+test('HTTP logging strips secrets from OAuth and webhook query strings', () => {
+  const sanitized = sanitizeHttpUrl('/oauth/meta/callback?code=secret-code&state=secret-state&safe=value');
+  assert.equal(sanitized, '/oauth/meta/callback?code=%5BREDACTED%5D&state=%5BREDACTED%5D&safe=value');
+  assert.equal(sanitized.includes('secret-code'), false);
+  assert.equal(sanitized.includes('secret-state'), false);
+
+  const webhook = sanitizeHttpUrl('/webhooks/meta?hub.mode=subscribe&hub.verify_token=private-token&hub.challenge=123');
+  assert.equal(webhook.includes('private-token'), false);
+  assert.equal(webhook.includes('hub.challenge=123'), true);
+});
 
 test('health and authenticated identity endpoints respond', async (t) => {
   const db = {

@@ -14,8 +14,8 @@ export const knowledgeDocumentSchema = z.object({
   if (value.sourceKind === 'url' && !value.sourceUri) {
     ctx.addIssue({ code: 'custom', path: ['sourceUri'], message: 'sourceUri is required for URL sources' });
   }
-  if (['text', 'faq'].includes(value.sourceKind) && !value.content.trim()) {
-    ctx.addIssue({ code: 'custom', path: ['content'], message: 'content is required for text sources' });
+  if (['text', 'faq', 'url'].includes(value.sourceKind) && !value.content.trim()) {
+    ctx.addIssue({ code: 'custom', path: ['content'], message: 'content is required until automatic URL extraction is enabled' });
   }
 });
 
@@ -36,7 +36,7 @@ export function knowledgeRoutes(db) {
   });
 
   router.post('/', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'knowledge-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'knowledge-editor']);
     const input = knowledgeDocumentSchema.parse(req.body);
     const checksum = createHash('sha256').update(input.content).digest('hex');
     const result = await db.query(
@@ -59,7 +59,7 @@ export function knowledgeRoutes(db) {
   });
 
   router.delete('/:documentId', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'knowledge-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'knowledge-editor']);
     const result = await db.query(
       `UPDATE knowledge_documents SET status = 'archived', updated_at = now()
        WHERE id = $1 AND tenant_id = $2 RETURNING id`,
@@ -71,4 +71,3 @@ export function knowledgeRoutes(db) {
 
   return router;
 }
-

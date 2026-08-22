@@ -39,7 +39,7 @@ export function productRoutes(db) {
   });
 
   router.post('/', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'catalog-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'catalog-editor']);
     const input = productSchema.parse(req.body);
     const result = await db.query(
       `INSERT INTO catalog_products
@@ -52,7 +52,7 @@ export function productRoutes(db) {
   });
 
   router.patch('/:productId', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'catalog-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'catalog-editor']);
     const input = updateProductSchema.parse(req.body);
     const current = await db.query(
       'SELECT * FROM catalog_products WHERE id = $1 AND tenant_id = $2',
@@ -80,7 +80,7 @@ export function productRoutes(db) {
   });
 
   router.delete('/:productId', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'catalog-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'catalog-editor']);
     const result = await db.query(
       `UPDATE catalog_products SET status = 'archived', updated_at = now()
        WHERE id = $1 AND tenant_id = $2 RETURNING id`,
@@ -92,4 +92,3 @@ export function productRoutes(db) {
 
   return router;
 }
-

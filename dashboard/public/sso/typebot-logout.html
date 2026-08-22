@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head><meta charset="utf-8" /><title>تسجيل الخروج من محرر التدفقات</title></head>
+  <body>
+    <script>
+      (async () => {
+        const csrfResponse = await fetch('/api/auth/csrf', { credentials: 'same-origin' });
+        if (csrfResponse.ok) {
+          const { csrfToken } = await csrfResponse.json();
+          await fetch('/api/auth/signout', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ csrfToken, callbackUrl: location.origin, json: 'true' }),
+          });
+        }
+        localStorage.clear();
+        sessionStorage.clear();
+      })().finally(() => {
+        const parentDomain = location.hostname.split('.').slice(1).join('.');
+        const dashboardOrigin = `${location.protocol}//dashboard.${parentDomain}${location.port ? `:${location.port}` : ''}`;
+        parent.postMessage({ type: 'my-ai-desk-engine-logout', engine: 'typebot' }, dashboardOrigin);
+      });
+    </script>
+  </body>
+</html>

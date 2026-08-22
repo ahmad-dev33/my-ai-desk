@@ -24,7 +24,9 @@ export function tenantRoutes(db) {
         : `SELECT t.*, m.roles FROM tenants t
            JOIN memberships m ON m.tenant_id = t.id
            JOIN operators o ON o.id = m.operator_id
-           WHERE o.oidc_subject = $1 ORDER BY t.created_at DESC`,
+           WHERE o.oidc_subject = $1
+             AND o.status = 'active' AND t.status = 'active'
+           ORDER BY t.created_at DESC`,
       isAdmin ? [] : [req.identity.subject],
     );
     res.json({ data: result.rows });
@@ -50,6 +52,11 @@ export function tenantRoutes(db) {
       await client.query(
         `INSERT INTO memberships (tenant_id, operator_id, roles) VALUES ($1, $2, $3)`,
         [tenantResult.rows[0].id, operatorResult.rows[0].id, ['tenant-admin']],
+      );
+      await client.query(
+        `INSERT INTO ai_handoff_policies (tenant_id) VALUES ($1)
+         ON CONFLICT (tenant_id) DO NOTHING`,
+        [tenantResult.rows[0].id],
       );
       return tenantResult.rows[0];
     });

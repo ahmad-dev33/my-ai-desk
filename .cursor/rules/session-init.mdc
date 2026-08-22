@@ -1,0 +1,21 @@
+---
+description: Enforce reading project memory and architectural boundaries at the start of every session.
+alwaysApply: true
+---
+
+# Session Initialization & Memory Recovery
+
+At the start of every session, the AI agent MUST follow this sequence before making any changes or proposing code:
+
+1. **Recover Context**: Read `.cursor/context-tool/compact-context.md`, then read the canonical product and access definition at `docs/PRODUCT_DEFINITION.md`. The compact context contains the generated architecture, DB schema, API routes, and roadmap. The product definition controls product scope, users, roles, and tenant isolation. Only if details are missing should you check individual files such as `docs/ROADMAP.md` or the relevant source files.
+2. **Understand the Architecture**:
+   - **Control Plane**: Source of truth for CRM, tenants, operators, memberships, products, and knowledge documents.
+   - **Chatwoot**: The only human inbox.
+   - **Typebot**: Conversation graph execution.
+   - **Control-plane bridge**: Event translation, Redis session state, idempotency, retries, and asynchronous processing live inside the Control Plane. There is no standalone bridge service.
+   - **Access Model**: My AI Desk is internal to the platform administrator and administrator-created employees. Client companies do not log in. The administrator sees all tenants; employees see only explicitly assigned tenants, and an employee may manage multiple tenants.
+3. **Re-use Existing Decisions**: Under no circumstances should you re-implement or duplicate tenant or CRM logic in Typebot or Chatwoot.
+4. **Follow the Roadmap**: Check the `In Progress` and `Next` sections in `docs/ROADMAP.md` to align with the current implementation phase.
+5. **Resolve Conflicts by Priority**: `docs/PRODUCT_DEFINITION.md` is canonical for product scope and access. `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` describe the current architecture and execution order. Files under `memory/` are historical snapshots and must not override current canonical documents.
+
+*Do not ask the user for context that is already documented in the canonical files. Always read files first.*

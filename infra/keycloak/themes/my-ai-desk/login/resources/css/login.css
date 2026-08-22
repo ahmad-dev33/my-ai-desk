@@ -1,0 +1,28 @@
+:root {
+  --brand-primary: #635bff;
+  --brand-primary-hover: #5046e5;
+  --brand-bg: #0b0f19;
+  --brand-card-bg: rgba(18, 24, 38, 0.85);
+  --brand-border: #1e293b;
+  --brand-text: #f8fafc;
+  --brand-text-muted: #94a3b8;
+  --brand-input-bg: #0f172a;
+  --brand-error: #ef4444;
+  --brand-radius: 12px;
+}
+
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: var(--brand-bg); background-image: radial-gradient(at 0% 0%, rgba(99, 91, 255, 0.15) 0, transparent 50%), radial-gradient(at 100% 100%, rgba(99, 91, 255, 0.1) 0, transparent 50%); color: var(--brand-text); min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-pf-page { width: 100%; max-width: 440px; padding: 24px; box-sizing: border-box; }
+.card-pf { background: var(--brand-card-bg); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--brand-border); border-radius: var(--brand-radius); padding: 36px 32px; box-shadow: 0 20px 40px -15px rgba(0, 0, 0, .5); }
+#kc-header, #kc-header-wrapper { text-align: center; font-size: 24px; font-weight: 700; color: var(--brand-text); margin-bottom: 24px; letter-spacing: -.5px; }
+#kc-page-title { font-size: 18px; font-weight: 600; color: var(--brand-text); margin: 0 0 20px; text-align: center; }
+.form-group { margin-bottom: 18px; }
+label { display: block; font-size: 13px; font-weight: 500; color: var(--brand-text-muted); margin-bottom: 6px; }
+input.form-control, input[type="text"], input[type="password"], input[type="email"] { width: 100%; box-sizing: border-box; padding: 12px 14px; background-color: var(--brand-input-bg); border: 1px solid var(--brand-border); border-radius: 8px; color: var(--brand-text); font-size: 14px; outline: none; }
+input.form-control:focus, input[type="text"]:focus, input[type="password"]:focus, input[type="email"]:focus { border-color: var(--brand-primary); box-shadow: 0 0 0 3px rgba(99, 91, 255, .25); }
+.btn-primary, input[type="submit"], button[type="submit"] { width: 100%; padding: 12px 16px; background: linear-gradient(135deg, var(--brand-primary), var(--brand-primary-hover)); border: 0; border-radius: 8px; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+.alert-error { background-color: rgba(239, 68, 68, .15); border: 1px solid rgba(239, 68, 68, .4); color: #fca5a5; padding: 12px 14px; border-radius: 8px; font-size: 13px; margin-bottom: 20px; }
+#kc-form-options { display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 18px; color: var(--brand-text-muted); }
+#kc-form-options a, #kc-info-wrapper a { color: var(--brand-primary); text-decoration: none; }
+#kc-info-wrapper { margin-top: 24px; text-align: center; font-size: 13px; color: var(--brand-text-muted); border-top: 1px solid var(--brand-border); padding-top: 16px; }
+[dir="rtl"] body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, Tahoma, sans-serif; }

@@ -3,10 +3,16 @@
   <head><meta charset="utf-8" /><title>اكتمل تسجيل الدخول</title></head>
   <body>
     <script>
-      const target = sessionStorage.getItem('unified-dashboard-return');
+      const storedTarget = sessionStorage.getItem('unified-dashboard-return');
       sessionStorage.removeItem('unified-dashboard-return');
-      location.replace(target || 'http://dashboard.localhost:8080/?sso=typebot');
+      let target = null;
+      if (storedTarget) {
+        const parsedTarget = new URL(storedTarget, location.origin);
+        if (parsedTarget.origin === location.origin) target = parsedTarget.href;
+      }
+      const parentDomain = location.hostname.split('.').slice(1).join('.');
+      const fallback = `${location.protocol}//dashboard.${parentDomain}${location.port ? `:${location.port}` : ''}/?sso=typebot`;
+      location.replace(target || fallback);
     </script>
   </body>
 </html>
-

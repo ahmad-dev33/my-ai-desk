@@ -40,10 +40,7 @@ services:
     mem_limit: 128m
 
   control-plane:
-    mem_limit: 192m
+    mem_limit: 256m
 
   dashboard:
     mem_limit: 64m
-
-  bridge:
-    mem_limit: 192m

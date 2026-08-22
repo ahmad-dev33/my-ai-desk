@@ -1,0 +1,20 @@
+{
+  "name": "My AI Desk",
+  "short_name": "AI Desk",
+  "description": "منصة إدارة المحادثات والأتمتة والذكاء الاصطناعي",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "/?service=overview",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f7fa",
+  "theme_color": "#635bff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

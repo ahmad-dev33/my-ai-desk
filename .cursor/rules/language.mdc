@@ -1,0 +1,12 @@
+---
+description: Match user-facing communication to the user's language while keeping code and technical identifiers consistent.
+alwaysApply: true
+---
+
+# Language Convention
+
+- Respond in the language used by the user unless the user explicitly requests another language.
+- Arabic user conversations should receive Arabic responses. Keep explanations clear and preserve necessary English technical terms.
+- Source code, identifiers, environment variables, API names, database names, and machine-facing configuration should remain in English.
+- Code comments and git commit messages should normally be in English for maintainability unless the user explicitly requests otherwise.
+- Documentation may be English, Arabic, or bilingual according to its intended audience. Do not translate existing documents merely for consistency.

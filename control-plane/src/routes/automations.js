@@ -27,7 +27,7 @@ export function automationRoutes(db) {
   });
 
   router.post('/', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'automation-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'automation-editor']);
     const input = automationSchema.parse(req.body);
     const result = await db.query(
       `INSERT INTO automation_definitions (tenant_id, name, description, engine, engine_ref, created_by_subject)
@@ -38,7 +38,7 @@ export function automationRoutes(db) {
   });
 
   router.post('/:automationId/publish', async (req, res) => {
-    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'automation-editor']);
+    await assertTenantAccess(db, req.identity, req.params.tenantId, ['tenant-admin', 'operator', 'automation-editor']);
     const input = publishSchema.parse(req.body);
     const automation = await db.transaction(async (client) => {
       const current = await client.query(

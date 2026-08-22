@@ -1,6 +1,6 @@
-# منصة المحادثات والأتمتة الموحدة
+# My AI Desk
 
-منصة داخلية ذات علامة تجارية خاصة تستخدم Chatwoot كمحرّك لصندوق المحادثات والدعم البشري، وTypebot كمحرّك لبناء التدفقات، مع Control Plane مركزي يملك العملاء وجهات الاتصال والأتمتة والصلاحيات.
+**My AI Desk** منصة تشغيل داخلية لإدارة خدمة الرد الآلي والمحادثات لعدة شركات من واجهة تعمل على الحاسوب، مع خدمات خلفية دائمة على الخادم. يستخدمها مالك المنصة وموظفوه فقط؛ الشركات العميلة لا تحصل على حسابات دخول. يرى المدير جميع الشركات والأعمال، بينما يرى كل موظف الشركات المعيّن عليها فقط، ويمكن تعيين الموظف لعدة شركات. تستمر الخدمات الخلفية في استقبال رسائل القنوات والرد تلقائياً بالـAI وتحويل المحادثة إلى موظف بشري عند الحاجة حتى عند إغلاق الواجهة.
 
 ## المكونات
 
@@ -8,14 +8,17 @@
 | --- | --- |
 | `control-plane/` | المصدر المركزي للعملاء والعضويات وجهات الاتصال وتعريفات الأتمتة |
 | `dashboard/` | واجهة المشغلين الموحدة وتسجيل الدخول عبر Keycloak |
-| `bridge/` | جسر Chatwoot إلى Typebot في مرحلة MVP |
+| `control-plane/src/bridge/` | جسر الأحداث المدمج: استقبال Webhooks، الجلسات، والإعادة الآمنة للمعالجة |
 | `chatwoot-develop/` | مصدر Chatwoot 4.16.2 |
 | `typebot.io-main/` | مصدر Typebot 3.17.2 |
 | `infra/` | PostgreSQL وKeycloak وإعدادات البنية التحتية |
 | `scripts/` | توليد الإعدادات وتسجيل Webhooks ومزامنة المصادر |
 
+تعريف المنتج ونموذج المستخدمين والعزل موجود في [`docs/PRODUCT_DEFINITION.md`](docs/PRODUCT_DEFINITION.md)، وهو المرجع المعتمد عند وجود أي وصف قديم أو غامض.
 تفاصيل الملكية والقرارات المعمارية موجودة في [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 المهام المنجزة والمؤجلة وترتيب التنفيذ موجودة في [`docs/ROADMAP.md`](docs/ROADMAP.md).
+دليل التشغيل وضبط وكيل الذكاء الاصطناعي وحالة كل ميزة موجود في [`docs/USER_GUIDE_AR.md`](docs/USER_GUIDE_AR.md).
+دليل تجهيز الخادم وDNS وHTTPS والنسخ الاحتياطي موجود في [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
 ## المتطلبات
 
@@ -60,7 +63,7 @@ docker compose -f docker-compose.yml -f docker-compose.source-build.yml up -d --
 - Typebot Viewer: `https://bot.<domain>`
 - Keycloak: `https://auth.<domain>`
 
-## تفعيل جسر الرسائل
+## تفعيل استقبال الرسائل
 
 بعد إنشاء حساب Chatwoot ونشر تدفق Typebot، حدّث `CHATWOOT_API_TOKEN` و`TYPEBOT_PUBLIC_ID` في `.env` ثم نفّذ:
 
@@ -73,9 +76,6 @@ docker compose -f docker-compose.yml -f docker-compose.source-build.yml up -d --
 ```powershell
 cd control-plane
 npm install
-npm test
-
-cd ..\bridge
 npm test
 
 cd ..\dashboard

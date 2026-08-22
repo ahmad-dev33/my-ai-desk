@@ -8,7 +8,7 @@ x-chatwoot: &chatwoot
     NODE_ENV: production
     RAILS_ENV: production
     INSTALLATION_ENV: docker
-    FRONTEND_URL: ${CHATWOOT_FRONTEND_URL:-${PUBLIC_SCHEME:-https}://inbox.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}}
+    FRONTEND_URL: ${PUBLIC_SCHEME:-https}://inbox.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
     FORCE_SSL: ${CHATWOOT_FORCE_SSL:-true}
     ENABLE_ACCOUNT_SIGNUP: "false"
     SECRET_KEY_BASE: ${CHATWOOT_SECRET_KEY_BASE}
@@ -35,6 +35,10 @@ x-chatwoot: &chatwoot
     SMTP_PASSWORD: ${SMTP_PASSWORD:-unused}
     SMTP_ENABLE_STARTTLS_AUTO: "true"
     DEFAULT_LOCALE: ar
+    WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+    RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-5}
+    SIDEKIQ_CONCURRENCY: ${SIDEKIQ_CONCURRENCY:-3}
+    MALLOC_ARENA_MAX: ${MALLOC_ARENA_MAX:-2}
   volumes:
     - chatwoot-storage:/app/storage
   networks: [backend, proxy]
@@ -46,7 +50,7 @@ x-typebot: &typebot
     DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/typebot
     REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/1
     ENCRYPTION_SECRET: ${TYPEBOT_ENCRYPTION_SECRET}
-    NODE_OPTIONS: --no-node-snapshot
+    NODE_OPTIONS: --no-node-snapshot --max-old-space-size=384
     HOSTNAME: 0.0.0.0
     NEXTAUTH_URL: ${PUBLIC_SCHEME:-https}://flows.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
     NEXT_PUBLIC_VIEWER_URL: ${PUBLIC_SCHEME:-https}://bot.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
@@ -66,9 +70,11 @@ x-typebot: &typebot
     S3_ACCESS_KEY: ${MINIO_ROOT_USER}
     S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
     S3_BUCKET: typebot
-    S3_ENDPOINT: assets.${BASE_DOMAIN}
-    S3_PORT: ${S3_PUBLIC_PORT:-443}
-    S3_SSL: ${S3_PUBLIC_SSL:-true}
+    # Server-side S3 traffic must stay on the Docker network. Public asset URLs
+    # are generated separately through S3_PUBLIC_CUSTOM_DOMAIN below.
+    S3_ENDPOINT: minio
+    S3_PORT: 9000
+    S3_SSL: "false"
     S3_REGION: us-east-1
     S3_PUBLIC_CUSTOM_DOMAIN: ${PUBLIC_SCHEME:-https}://assets.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
   networks: [backend, proxy]
@@ -94,6 +100,22 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik-letsencrypt:/letsencrypt
+    networks: [proxy]
+
+  ngrok:
+    image: ngrok/ngrok:${NGROK_VERSION:-3.39.11-alpine}
+    restart: unless-stopped
+    depends_on: [traefik]
+    command:
+      - http
+      - http://traefik:80
+      - --host-header=hooks.${BASE_DOMAIN}
+      - --log=stdout
+      - --log-format=json
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    mem_limit: 96m
+    cpus: 0.25
     networks: [proxy]
 
   postgres:
@@ -136,7 +158,7 @@ services:
   redis:
     image: redis:7.4-alpine
     restart: unless-stopped
-    command: [redis-server, --appendonly, "yes", --requirepass, "${REDIS_PASSWORD}"]
+    command: [redis-server, --appendonly, "yes", --requirepass, "${REDIS_PASSWORD}", --maxmemory, "256mb", --maxmemory-policy, "volatile-lru"]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -210,6 +232,7 @@ services:
       BASE_DOMAIN: ${BASE_DOMAIN}
       PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
       PUBLIC_PORT_SUFFIX: ${PUBLIC_PORT_SUFFIX:-}
+      CHATWOOT_PLATFORM_API_TOKEN: ${CHATWOOT_PLATFORM_API_TOKEN:-${WEBHOOK_SHARED_SECRET:-}}
     entrypoint: docker/entrypoints/rails.sh
     command:
       - bundle
@@ -222,6 +245,8 @@ services:
           'BRAND_NAME' => ENV.fetch('BRAND_NAME'),
           'BRAND_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
           'WIDGET_BRAND_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
+          'TERMS_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
+          'PRIVACY_URL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}",
           'LOGO' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/brand/logo.svg",
           'LOGO_DARK' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/brand/logo-dark.svg",
           'LOGO_THUMBNAIL' => "#{ENV.fetch('PUBLIC_SCHEME')}://dashboard.#{ENV.fetch('BASE_DOMAIN')}#{ENV.fetch('PUBLIC_PORT_SUFFIX', '')}/favicon.svg",
@@ -232,6 +257,11 @@ services:
           config = InstallationConfig.find_or_initialize_by(name: name)
           config.value = value
           config.save!
+        end
+        platform_app = PlatformApp.find_or_create_by!(name: 'My AI Desk Control Plane')
+        platform_app.access_token.update!(token: ENV.fetch('CHATWOOT_PLATFORM_API_TOKEN'))
+        Account.find_each do |account|
+          platform_app.platform_app_permissibles.find_or_create_by!(permissible: account)
         end
         puts 'Chatwoot development branding applied.'
 
@@ -304,6 +334,10 @@ services:
       KC_HOSTNAME: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
       KC_HTTP_ENABLED: "true"
       KC_HEALTH_ENABLED: "true"
+      JAVA_OPTS_KC_HEAP: "-Xms128m -Xmx384m"
+      JAVA_OPTS_APPEND: "-XX:MaxRAMPercentage=70.0"
+    volumes:
+      - ./infra/keycloak/themes:/opt/keycloak/themes:ro
     networks: [backend, proxy]
     labels:
       traefik.enable: "true"
@@ -322,8 +356,10 @@ services:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
       KEYCLOAK_USER_EMAIL: ${KEYCLOAK_USER_EMAIL}
+      KEYCLOAK_USER_CONTACT_EMAIL: ${KEYCLOAK_USER_CONTACT_EMAIL:-}
       KEYCLOAK_USER_PASSWORD: ${KEYCLOAK_USER_PASSWORD}
       KEYCLOAK_TYPEBOT_CLIENT_SECRET: ${KEYCLOAK_TYPEBOT_CLIENT_SECRET}
+      KEYCLOAK_CONTROL_PLANE_CLIENT_SECRET: ${KEYCLOAK_CONTROL_PLANE_CLIENT_SECRET:-${WEBHOOK_SHARED_SECRET:-}}
       BASE_DOMAIN: ${BASE_DOMAIN}
       PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
       PUBLIC_PORT_SUFFIX: ${PUBLIC_PORT_SUFFIX:-}
@@ -344,9 +380,33 @@ services:
       OIDC_ISSUER: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/realms/unified
       OIDC_JWKS_URL: http://keycloak:8080/realms/unified/protocol/openid-connect/certs
       OIDC_CLIENT_ID: unified-dashboard
+      KEYCLOAK_ADMIN_BASE_URL: http://keycloak:8080
+      KEYCLOAK_REALM: unified
+      KEYCLOAK_ADMIN_CLIENT_ID: control-plane-admin
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_CONTROL_PLANE_CLIENT_SECRET:-${WEBHOOK_SHARED_SECRET:-}}
       CORS_ORIGIN: ${PUBLIC_SCHEME:-https}://dashboard.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
       AUTH_DISABLED: "false"
-      BRIDGE_SERVICE_SECRET: ${BRIDGE_SERVICE_SECRET:-${WEBHOOK_SHARED_SECRET}}
+      BRIDGE_SERVICE_SECRET: ${BRIDGE_SERVICE_SECRET:-${WEBHOOK_SHARED_SECRET:-}}
+      WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET}
+      CHATWOOT_BASE_URL: http://chatwoot-web:3000
+      CHATWOOT_PUBLIC_URL: ${PUBLIC_SCHEME:-https}://inbox.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}
+      CHATWOOT_PLATFORM_API_TOKEN: ${CHATWOOT_PLATFORM_API_TOKEN:-${WEBHOOK_SHARED_SECRET:-}}
+      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
+      CHATWOOT_TOKENS_JSON: ${CHATWOOT_TOKENS_JSON:-{}}
+      BRIDGE_CREDENTIALS_JSON: ${BRIDGE_CREDENTIALS_JSON:-{}}
+      TYPEBOT_BASE_URL: http://typebot-viewer:3000
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/2
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_APP_ID: ${META_APP_ID:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
+      META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-${PUBLIC_SCHEME:-https}://hooks.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/oauth/meta/callback}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v25.0}
+      META_CREDENTIALS_JSON: ${META_CREDENTIALS_JSON:-{}}
+      OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
+      OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-5}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
     healthcheck:
       test: [CMD, wget, -qO-, http://127.0.0.1:3000/health/ready]
       interval: 10s
@@ -360,6 +420,10 @@ services:
       traefik.http.routers.control-plane.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
       traefik.http.routers.control-plane.tls: "${TRAEFIK_TLS:-true}"
       traefik.http.services.control-plane.loadbalancer.server.port: "3000"
+      traefik.http.routers.bridge-webhook.rule: Host(`hooks.${BASE_DOMAIN}`) && (PathPrefix(`/webhooks/`) || PathPrefix(`/oauth/meta/`))
+      traefik.http.routers.bridge-webhook.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.bridge-webhook.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.routers.bridge-webhook.service: control-plane
 
   dashboard:
     build:
@@ -386,41 +450,11 @@ services:
       traefik.http.routers.typebot-sso.tls: "${TRAEFIK_TLS:-true}"
       traefik.http.routers.typebot-sso.priority: "100"
       traefik.http.routers.typebot-sso.service: dashboard
-
-  bridge:
-    build: ./bridge
-    profiles: [automation]
-    restart: unless-stopped
-    depends_on:
-      chatwoot-web: {condition: service_started}
-      typebot-viewer: {condition: service_started}
-      redis: {condition: service_healthy}
-      control-plane: {condition: service_healthy}
-    environment:
-      PORT: "3000"
-      WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET}
-      CHATWOOT_BASE_URL: http://chatwoot-web:3000
-      CHATWOOT_API_TOKEN: ${CHATWOOT_API_TOKEN}
-      CHATWOOT_TOKENS_JSON: ${CHATWOOT_TOKENS_JSON}
-      BRIDGE_CREDENTIALS_JSON: ${BRIDGE_CREDENTIALS_JSON:-{}}
-      TYPEBOT_BASE_URL: http://typebot-viewer:3000
-      CONTROL_PLANE_BASE_URL: http://control-plane:3000
-      CONTROL_PLANE_SERVICE_SECRET: ${BRIDGE_SERVICE_SECRET:-${WEBHOOK_SHARED_SECRET}}
-      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/2
-      SESSION_TTL_SECONDS: "604800"
-    healthcheck:
-      test: [CMD, wget, -qO-, http://127.0.0.1:3000/healthz]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 5s
-    networks: [backend, proxy]
-    labels:
-      traefik.enable: "true"
-      traefik.http.routers.bridge.rule: Host(`hooks.${BASE_DOMAIN}`) && Path(`/webhooks/chatwoot`)
-      traefik.http.routers.bridge.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
-      traefik.http.routers.bridge.tls: "${TRAEFIK_TLS:-true}"
-      traefik.http.services.bridge.loadbalancer.server.port: "3000"
+      traefik.http.routers.chatwoot-sso.rule: Host(`inbox.${BASE_DOMAIN}`) && PathPrefix(`/sso/`)
+      traefik.http.routers.chatwoot-sso.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.chatwoot-sso.tls: "${TRAEFIK_TLS:-true}"
+      traefik.http.routers.chatwoot-sso.priority: "100"
+      traefik.http.routers.chatwoot-sso.service: dashboard
 
 networks:
   backend:
