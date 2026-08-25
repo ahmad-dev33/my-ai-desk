@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 downloads/
 data/
 upstreams/
@@ -6,6 +8,19 @@ upstreams/
 node_modules/
 dist/
 .coverage/
+.gstack/
+.lockgen-*/
+.cache/
+/omniroute.json
+/OMNIROUTE_README_AR.md
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.pem
+*.key
+*.p12
+*.pfx
 .docker-*
 .watcher-*
 backups/

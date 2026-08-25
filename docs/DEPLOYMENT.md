@@ -29,12 +29,17 @@ cd my-ai-desk
 
 ```env
 PUBLIC_SCHEME=https
+PRODUCTION_MODE=true
 PUBLIC_PORT_SUFFIX=
 TRAEFIK_ENTRYPOINT=websecure
 TRAEFIK_TLS=true
 CHATWOOT_FORCE_SSL=true
 TYPEBOT_DISABLE_SIGNUP=true
 META_OAUTH_REDIRECT_URI=https://hooks.example.com/oauth/meta/callback
+META_ENABLE_COMMENT_MANAGEMENT=false
+LEGAL_ENTITY_NAME="Your registered or operating entity name"
+PRIVACY_CONTACT_EMAIL=privacy@example.com
+DATA_RETENTION_DAYS=90
 ```
 
 لا تنقل `.env` عبر Git، ولا تستخدم قيم بيئة التطوير على الخادم. افحص الملف:
@@ -54,6 +59,11 @@ docker compose ps
 
 - Callback: `https://hooks.<domain>/webhooks/meta`
 - OAuth redirect: `https://hooks.<domain>/oauth/meta/callback`
+- Privacy Policy URL: `https://api.<domain>/legal/privacy`
+- Terms of Service URL: `https://api.<domain>/legal/terms`
+- User Data Deletion URL: `https://api.<domain>/legal/data-deletion`
+- Data Deletion Callback URL: `https://hooks.<domain>/webhooks/meta/data-deletion`
+- Deauthorize Callback URL: `https://hooks.<domain>/webhooks/meta/deauthorize`
 - ضع قيمة `META_VERIFY_TOKEN` نفسها في نموذج Webhooks داخل Meta.
 - لا تضع كلمة مرور Facebook أو Instagram في `.env`؛ تسجيل الدخول يتم في صفحة Meta الرسمية.
 

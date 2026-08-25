@@ -9,6 +9,11 @@ into tickets, chat messages, tenant-visible configuration, or PostgreSQL.
 - Webhook verification: `GET https://hooks.<domain>/webhooks/meta`
 - Signed events: `POST https://hooks.<domain>/webhooks/meta`
 - OAuth callback: `GET https://hooks.<domain>/oauth/meta/callback`
+- Privacy policy: `GET https://api.<domain>/legal/privacy`
+- Terms: `GET https://api.<domain>/legal/terms`
+- Data deletion instructions: `GET https://api.<domain>/legal/data-deletion`
+- Meta data-deletion callback: `POST https://hooks.<domain>/webhooks/meta/data-deletion`
+- Meta deauthorization callback: `POST https://hooks.<domain>/webhooks/meta/deauthorize`
 - Exact raw-body `X-Hub-Signature-256` HMAC verification.
 - Unique ownership of an active provider account across tenants.
 - Provider-event idempotency and a durable event ledger.
@@ -23,6 +28,8 @@ into tickets, chat messages, tenant-visible configuration, or PostgreSQL.
   Instagram professional account is selected.
 - Safe disconnect that disables the channel, removes its encrypted credential,
   and unsubscribes that Page or Instagram account from this app's Webhooks.
+- Automatic refresh of expiring long-lived Instagram credentials and timed
+  redaction of message bodies from operational ledgers.
 
 Comment-to-DM is deliberately not sent through the ordinary message endpoint.
 It stays pending until the provider-specific Private Reply adapter and its reviewed
@@ -74,12 +81,21 @@ The channel row stores only `credential_ref=meta-company-a-facebook`.
 8. Request Advanced Access only after the complete test passes.
 9. Switch to Live only after Business Verification and App Review succeed.
 
-Typical permissions (Meta can rename or regroup them; confirm in the current App Dashboard):
+Request only permissions backed by a complete reviewer-visible feature. For the
+current Instagram customer-inbox release, request:
+
+- `instagram_business_basic`
+- `instagram_business_manage_messages`
+
+Keep `META_ENABLE_COMMENT_MANAGEMENT=false`. Request
+`instagram_business_manage_comments` only after comment moderation/private-reply
+behavior and its reviewer recording are complete.
+
+Typical permissions for later products (Meta can rename or regroup them; confirm in the current App Dashboard):
 
 - Facebook messages: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`.
 - Page comment use cases: `pages_read_engagement`, `pages_manage_engagement` as required.
-- Instagram Login: `instagram_business_basic`,
-  `instagram_business_manage_messages`, `instagram_business_manage_comments`.
+- Instagram Login comments: `instagram_business_manage_comments`.
 - WhatsApp: `whatsapp_business_management`, `whatsapp_business_messaging`.
 
 ## First owned account workflow
