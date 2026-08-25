@@ -4,8 +4,8 @@ import { apiErrorMessage } from '../src/api-errors.js';
 
 test('Chatwoot tenant binding errors are shown as an actionable Arabic message', () => {
   const message = apiErrorMessage('tenant_chatwoot_account_not_configured', 409);
-  assert.match(message, /غير مرتبطة بحساب Chatwoot/);
-  assert.match(message, /إعدادات القنوات/);
+  assert.match(message, /صندوق المحادثات غير مهيأ/);
+  assert.match(message, /إعداد القناة/);
   assert.doesNotMatch(message, /tenant_chatwoot_account_not_configured/);
 });
 

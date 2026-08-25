@@ -19,8 +19,11 @@ services:
     labels:
       traefik.http.routers.keycloak.tls.certresolver: letsencrypt
   control-plane:
+    environment:
+      PRODUCTION_MODE: "true"
     labels:
       traefik.http.routers.control-plane.tls.certresolver: letsencrypt
+      traefik.http.routers.bridge-webhook.tls.certresolver: letsencrypt
   dashboard:
     labels:
       traefik.http.routers.dashboard.tls.certresolver: letsencrypt

@@ -375,6 +375,7 @@ services:
       keycloak-init: {condition: service_completed_successfully}
     environment:
       NODE_ENV: production
+      PRODUCTION_MODE: ${PRODUCTION_MODE:-false}
       PORT: "3000"
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/control_plane
       OIDC_ISSUER: ${PUBLIC_SCHEME:-https}://auth.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/realms/unified
@@ -400,12 +401,23 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5-mini}
       META_APP_SECRET: ${META_APP_SECRET:-}
       META_APP_ID: ${META_APP_ID:-}
+      META_INSTAGRAM_APP_SECRET: ${META_INSTAGRAM_APP_SECRET:-}
+      META_INSTAGRAM_APP_ID: ${META_INSTAGRAM_APP_ID:-}
       META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
       META_OAUTH_REDIRECT_URI: ${META_OAUTH_REDIRECT_URI:-${PUBLIC_SCHEME:-https}://hooks.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}/oauth/meta/callback}
-      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v25.0}
+      META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v26.0}
+      META_ENABLE_COMMENT_MANAGEMENT: ${META_ENABLE_COMMENT_MANAGEMENT:-false}
+      META_TOKEN_REFRESH_INTERVAL_MS: ${META_TOKEN_REFRESH_INTERVAL_MS:-43200000}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
+      LEGAL_ENTITY_NAME: ${LEGAL_ENTITY_NAME:-${BRAND_NAME:-My AI Desk}}
+      PRIVACY_CONTACT_EMAIL: ${PRIVACY_CONTACT_EMAIL:-${ACME_EMAIL:-}}
       META_CREDENTIALS_JSON: ${META_CREDENTIALS_JSON:-{}}
       OUTBOX_POLL_INTERVAL_MS: ${OUTBOX_POLL_INTERVAL_MS:-1000}
       OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-5}
+      META_OUTBOUND_CHANNEL_INTERVAL_MS: ${META_OUTBOUND_CHANNEL_INTERVAL_MS:-1000}
+      META_OUTBOUND_CONTACT_COOLDOWN_MS: ${META_OUTBOUND_CONTACT_COOLDOWN_MS:-1500}
+      META_OUTBOUND_REPLY_WINDOW_MS: ${META_OUTBOUND_REPLY_WINDOW_MS:-600000}
+      META_OUTBOUND_MAX_REPLIES_PER_WINDOW: ${META_OUTBOUND_MAX_REPLIES_PER_WINDOW:-6}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
     healthcheck:
       test: [CMD, wget, -qO-, http://127.0.0.1:3000/health/ready]
@@ -450,11 +462,13 @@ services:
       traefik.http.routers.typebot-sso.tls: "${TRAEFIK_TLS:-true}"
       traefik.http.routers.typebot-sso.priority: "100"
       traefik.http.routers.typebot-sso.service: dashboard
+      traefik.http.routers.typebot-sso.middlewares: typebot-frame
       traefik.http.routers.chatwoot-sso.rule: Host(`inbox.${BASE_DOMAIN}`) && PathPrefix(`/sso/`)
       traefik.http.routers.chatwoot-sso.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
       traefik.http.routers.chatwoot-sso.tls: "${TRAEFIK_TLS:-true}"
       traefik.http.routers.chatwoot-sso.priority: "100"
       traefik.http.routers.chatwoot-sso.service: dashboard
+      traefik.http.routers.chatwoot-sso.middlewares: chatwoot-frame
 
 networks:
   backend:

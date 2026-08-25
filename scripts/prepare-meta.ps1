@@ -47,7 +47,8 @@ $content = Set-EnvironmentValue $content 'META_APP_ID' '' -OnlyWhenEmpty
 $content = Set-EnvironmentValue $content 'META_APP_SECRET' '' -OnlyWhenEmpty
 $content = Set-EnvironmentValue $content 'META_VERIFY_TOKEN' (New-AlphaSecret 48) -OnlyWhenEmpty
 $content = Set-EnvironmentValue $content 'CREDENTIAL_ENCRYPTION_KEY' (New-Base64Secret 32) -OnlyWhenEmpty
-$content = Set-EnvironmentValue $content 'META_GRAPH_VERSION' 'v25.0' -OnlyWhenEmpty
+$content = Set-EnvironmentValue $content 'META_GRAPH_VERSION' 'v26.0' -OnlyWhenEmpty
+$content = Set-EnvironmentValue $content 'META_ENABLE_COMMENT_MANAGEMENT' 'false' -OnlyWhenEmpty
 
 $existingNgrokToken = [Regex]::Match($content, '(?m)^NGROK_AUTHTOKEN=(.*)$').Groups[1].Value.Trim()
 if ([string]::IsNullOrWhiteSpace($existingNgrokToken) -and (Test-Path -LiteralPath $NgrokConfigPath)) {

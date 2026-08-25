@@ -1,5 +1,5 @@
 {
-  "name": "unified-ai-dashboard",
+  "name": "my-ai-desk-dashboard",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -10,11 +10,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "keycloak-js": "latest",
-    "vite": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "@vitejs/plugin-react": "6.0.5",
+    "keycloak-js": "26.2.4",
+    "vite": "8.2.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {}
 }

@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import Keycloak from 'keycloak-js';
 import './styles.css';
 import { apiErrorMessage } from './api-errors.js';
+import { readMetaOAuthCallback, scheduleDelayed } from './async-ui.js';
 import { shouldLoadEmbeddedFrame } from './frame-loading.js';
 import { shouldShowTenantBar } from './layout.js';
 import { Icon } from './icons.jsx';
@@ -24,7 +25,7 @@ const keycloak = new Keycloak({
 const services = {
   overview: {
     label: 'نظرة عامة',
-    description: 'إدارة العملاء ومساحات العمل من منصتك الموحدة',
+    description: 'الشركات التي يديرها فريقك',
     group: 'الإدارة',
     native: true,
   },
@@ -36,8 +37,8 @@ const services = {
     adminOnly: true,
   },
   contacts: {
-    label: 'جهات الاتصال (CRM)',
-    description: 'إدارة سجلات العملاء والهويات عبر القنوات',
+    label: 'العملاء',
+    description: 'بيانات العملاء وحساباتهم عبر القنوات',
     group: 'بيانات الشركة',
     native: true,
   },
@@ -48,50 +49,44 @@ const services = {
     native: true,
   },
   knowledge: {
-    label: 'قاعدة المعرفة (AI)',
-    description: 'مصادر المعلومات والمستندات للبحث المعرفي RAG',
+    label: 'معلومات الشركة',
+    description: 'المعلومات التي يعتمد عليها المساعد في الإجابات',
     group: 'بيانات الشركة',
     native: true,
   },
   ai: {
-    label: 'وكيل الذكاء الاصطناعي',
-    description: 'ضبط أسلوب الإجابة والتحويل للموظف وتجربة الردود',
+    label: 'المساعد الذكي',
+    description: 'أسلوب الإجابة والتحويل إلى الموظفين',
     group: 'بيانات الشركة',
     native: true,
   },
-  automations: {
-    label: 'سجل الأتمتة',
-    description: 'إدارة وتفعيل تدفقات Typebot ومسارات الروبوت',
-    group: 'الأتمتة والقنوات',
-    native: true,
-  },
-  manychat: {
-    label: 'أدوات التسويق (ManyChat)',
-    description: 'الكلمات المفتاحية، الحمالات الجماعية والسلاسل الزمنية',
-    group: 'الأتمتة والقنوات',
+  rules: {
+    label: 'قواعد الاستجابة',
+    description: 'تشغيل رد أو تحويل عند ورود كلمات محددة',
+    group: 'التشغيل',
     native: true,
   },
   channels: {
-    label: 'قنوات Meta',
-    description: 'ربط Facebook وInstagram وWhatsApp ومراقبة الرسائل',
-    group: 'الأتمتة والقنوات',
+    label: 'الحسابات والقنوات',
+    description: 'إضافة حسابات التواصل وإدارة اتصالها',
+    group: 'التشغيل',
     native: true,
   },
   inbox: {
     label: 'صندوق المحادثات',
-    description: 'WhatsApp وInstagram وباقي القنوات',
+    description: 'متابعة رسائل العملاء وتوزيعها على الفريق',
     url: serviceUrl('inbox'),
-    group: 'مساحات التشغيل',
+    group: 'التشغيل',
   },
   flows: {
-    label: 'بناء التدفقات',
-    description: 'محرر Typebot لتصميم المحادثات',
+    label: 'منشئ التدفقات',
+    description: 'تصميم الردود الآلية ومسارات المحادثة',
     url: serviceUrl('flows'),
-    group: 'مساحات التشغيل',
+    group: 'التشغيل',
   },
 };
 
-const navigationGroups = ['الإدارة', 'بيانات الشركة', 'الأتمتة والقنوات', 'مساحات التشغيل'];
+const navigationGroups = ['الإدارة', 'بيانات الشركة', 'التشغيل'];
 const FRAME_LOADING_LIMIT_MS = 12000;
 
 async function apiRequest(path, options = {}) {
@@ -170,8 +165,8 @@ function Overview({ tenants, onRefresh, isAdmin }) {
     <section className="native-page">
       <div className="stats-grid">
         <article className="stat-card"><span>مساحات العمل</span><strong>{tenants.length}</strong><small>عملاء معزولون داخل المنصة</small></article>
-        <article className="stat-card"><span>مصدر البيانات</span><strong>موحّد</strong><small>جهات الاتصال والأتمتة تحت إدارة منصتك</small></article>
-        <article className="stat-card"><span>المحركات</span><strong>2</strong><small>Chatwoot للمحادثات وTypebot للتدفقات</small></article>
+        <article className="stat-card"><span>بيانات الشركات</span><strong>منفصلة</strong><small>منتجات وعملاء ومعلومات مستقلة لكل شركة</small></article>
+        <article className="stat-card"><span>الخدمة</span><strong>مستمرة</strong><small>الردود تعمل حتى عند إغلاق التطبيق</small></article>
       </div>
 
       <div className="tenant-panel">
@@ -327,21 +322,31 @@ function ContactsView({ tenantId }) {
   const [form, setForm] = useState({ displayName: '', email: '', phone: '', provider: 'instagram', externalId: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const requestVersion = useRef(0);
 
-  const loadContacts = async () => {
+  const loadContacts = async (signal) => {
     if (!tenantId) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
-      const res = await apiRequest(`/v1/tenants/${tenantId}/contacts?search=${encodeURIComponent(search)}`);
-      setContacts(res.data || []);
+      const res = await apiRequest(`/v1/tenants/${tenantId}/contacts?search=${encodeURIComponent(search)}`, { signal });
+      if (version === requestVersion.current) setContacts(res.data || []);
     } catch (err) {
-      setError(err.message);
+      if (err.name !== 'AbortError' && version === requestVersion.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   };
 
-  useEffect(() => { loadContacts(); }, [tenantId, search]);
+  useEffect(() => {
+    if (!tenantId) return undefined;
+    const controller = new AbortController();
+    const cancel = scheduleDelayed(() => loadContacts(controller.signal));
+    return () => {
+      cancel();
+      controller.abort();
+    };
+  }, [tenantId, search]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -440,21 +445,31 @@ function ProductsView({ tenantId }) {
   const [form, setForm] = useState({ name: '', sku: '', price: '0', currency: 'USD', inventoryQuantity: '10', description: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const requestVersion = useRef(0);
 
-  const loadProducts = async () => {
+  const loadProducts = async (signal) => {
     if (!tenantId) return;
+    const version = ++requestVersion.current;
     setLoading(true);
     try {
-      const res = await apiRequest(`/v1/tenants/${tenantId}/products?search=${encodeURIComponent(search)}`);
-      setProducts(res.data || []);
+      const res = await apiRequest(`/v1/tenants/${tenantId}/products?search=${encodeURIComponent(search)}`, { signal });
+      if (version === requestVersion.current) setProducts(res.data || []);
     } catch (err) {
-      setError(err.message);
+      if (err.name !== 'AbortError' && version === requestVersion.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   };
 
-  useEffect(() => { loadProducts(); }, [tenantId, search]);
+  useEffect(() => {
+    if (!tenantId) return undefined;
+    const controller = new AbortController();
+    const cancel = scheduleDelayed(() => loadProducts(controller.signal));
+    return () => {
+      cancel();
+      controller.abort();
+    };
+  }, [tenantId, search]);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -620,7 +635,7 @@ function KnowledgeView({ tenantId }) {
   return (
     <section className="native-page">
       <div className="toolbar">
-        <div><strong>مصادر المعرفة لمُحرك الـ AI (RAG)</strong></div>
+        <div><strong>معلومات الشركة</strong></div>
         <button className="btn-primary" onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'إلغاء' : '+ إضافة مصدر معرفي'}</button>
       </div>
 
@@ -702,7 +717,7 @@ function AiAgentView({ tenantId }) {
         autoHandoffKeywordsText: (response.data.autoHandoffKeywords || []).join('، '),
       });
     } catch (err) {
-      setError(err.message || 'تعذر تحميل إعدادات وكيل الذكاء الاصطناعي.');
+      setError(err.message || 'تعذر تحميل إعدادات المساعد.');
     } finally {
       setLoading(false);
     }
@@ -731,13 +746,13 @@ function AiAgentView({ tenantId }) {
       });
       setPolicy({ ...response.data, autoHandoffKeywordsText: autoHandoffKeywords.join('، ') });
     } catch (err) {
-      setError(err.message || 'تعذر حفظ إعدادات الوكيل.');
+      setError(err.message || 'تعذر حفظ إعدادات المساعد.');
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) return <section className="native-page"><div className="list-state"><div className="spinner"/>جارٍ تحميل إعدادات الوكيل…</div></section>;
+  if (loading) return <section className="native-page"><div className="list-state"><div className="spinner"/>جارٍ تحميل إعدادات المساعد…</div></section>;
   if (!policy) return <section className="native-page">{error && <div className="inline-error">{error}</div>}</section>;
 
   const providerReady = policy.provider?.configured;
@@ -746,11 +761,11 @@ function AiAgentView({ tenantId }) {
       <div className="agent-status-grid">
         <article className="agent-status-card">
           <span className={`agent-status-icon ${providerReady ? 'ready' : 'warning'}`}><Icon name="ai"/></span>
-          <div><small>محرك توليد الإجابة</small><strong>{providerReady ? policy.provider.model : 'وضع آمن دون نموذج خارجي'}</strong><p>{providerReady ? 'OpenAI متصل، وتُرسل إليه معلومات الشركة ذات الصلة فقط.' : 'الرد حالياً يقتبس أفضل منتج أو فقرة مطابقة دون صياغة ذكية.'}</p></div>
+          <div><small>صياغة الإجابات</small><strong>{providerReady ? 'مفعّلة' : 'الإجابات الأساسية'}</strong><p>{providerReady ? 'يستخدم المساعد المعلومات المرتبطة بهذه الشركة فقط.' : 'تُستخدم المنتجات ومعلومات الشركة دون صياغة إضافية.'}</p></div>
         </article>
         <article className="agent-status-card">
           <span className="agent-status-icon ready"><Icon name="products"/></span>
-          <div><small>مصادر الحقيقة</small><strong>المنتجات + قاعدة المعرفة</strong><p>كل سؤال يبحث داخل بيانات الشركة الحالية فقط، ولا يخلطها مع شركة أخرى.</p></div>
+          <div><small>مصادر الإجابة</small><strong>المنتجات ومعلومات الشركة</strong><p>كل سؤال يبحث داخل بيانات الشركة الحالية فقط.</p></div>
         </article>
       </div>
 
@@ -758,137 +773,21 @@ function AiAgentView({ tenantId }) {
 
       <div className="agent-layout agent-layout-single">
         <form className="data-card agent-settings" onSubmit={savePolicy}>
-          <div className="panel-title"><h2>سلوك الوكيل</h2><p>هذه التعليمات خاصة بالشركة المحددة في الأعلى.</p></div>
-          <div className="form-group"><label>تعليمات الوكيل</label><textarea rows="6" maxLength="4000" value={policy.customSystemPrompt} onChange={(e) => setPolicy({ ...policy, customSystemPrompt: e.target.value })} placeholder="مثال: تحدث باختصار وبلهجة ودودة، ولا تعرض منتجاً غير متوفر."/></div>
-          <div className="form-group"><label>الحد الأدنى للثقة: {Math.round(Number(policy.confidenceThreshold) * 100)}%</label><input type="range" min="0" max="1" step="0.05" value={policy.confidenceThreshold} onChange={(e) => setPolicy({ ...policy, confidenceThreshold: Number(e.target.value) })}/><small>إذا كانت المطابقة أضعف من هذا الحد، لا يخمّن الوكيل ويطلب تدخل موظف.</small></div>
+          <div className="panel-title"><h2>أسلوب المساعد</h2><p>تُطبق هذه الإعدادات على الشركة الحالية.</p></div>
+          <div className="form-group"><label>تعليمات الإجابة</label><textarea rows="6" maxLength="4000" value={policy.customSystemPrompt} onChange={(e) => setPolicy({ ...policy, customSystemPrompt: e.target.value })} placeholder="مثال: تحدث باختصار وبلهجة ودودة، ولا تعرض منتجاً غير متوفر."/></div>
+          <div className="form-group"><label>دقة المطابقة المطلوبة: {Math.round(Number(policy.confidenceThreshold) * 100)}%</label><input type="range" min="0" max="1" step="0.05" value={policy.confidenceThreshold} onChange={(e) => setPolicy({ ...policy, confidenceThreshold: Number(e.target.value) })}/><small>عند عدم توفر إجابة موثوقة، تُحوّل المحادثة إلى موظف.</small></div>
           <div className="form-group"><label>رسالة عدم توفر معلومات كافية</label><textarea rows="3" maxLength="1000" value={policy.fallbackReply} onChange={(e) => setPolicy({ ...policy, fallbackReply: e.target.value })}/></div>
           <div className="form-group"><label>كلمات التحويل لموظف</label><textarea rows="3" value={policy.autoHandoffKeywordsText} onChange={(e) => setPolicy({ ...policy, autoHandoffKeywordsText: e.target.value })} placeholder="موظف، دعم، أريد شخصاً"/><small>افصل الكلمات بفاصلة عربية أو إنجليزية.</small></div>
-          <div className="form-group"><label>رقم صندوق التصعيد في Chatwoot (اختياري)</label><input type="number" min="1" value={policy.escalationInboxId || ''} onChange={(e) => setPolicy({ ...policy, escalationInboxId: e.target.value })} placeholder="مثال: 3"/></div>
-          <button className="btn-primary" disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ إعدادات الوكيل'}</button>
+          <div className="form-group"><label>رقم صندوق التحويل (اختياري)</label><input type="number" min="1" value={policy.escalationInboxId || ''} onChange={(e) => setPolicy({ ...policy, escalationInboxId: e.target.value })} placeholder="مثال: 3"/></div>
+          <button className="btn-primary" disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ الإعدادات'}</button>
         </form>
       </div>
     </section>
   );
 }
 
-function AutomationsView({ tenantId }) {
-  const [automations, setAutomations] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', engineRef: '' });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const loadAutomations = async () => {
-    if (!tenantId) return;
-    setLoading(true);
-    try {
-      const res = await apiRequest(`/v1/tenants/${tenantId}/automations`);
-      setAutomations(res.data || []);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { loadAutomations(); }, [tenantId]);
-
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    if (!form.name.trim()) return;
-    setSaving(true);
-    setError('');
-    try {
-      const payload = { name: form.name, description: form.description, engine: 'typebot', engineRef: form.engineRef || null };
-      await apiRequest(`/v1/tenants/${tenantId}/automations`, { method: 'POST', body: JSON.stringify(payload) });
-      setForm({ name: '', description: '', engineRef: '' });
-      setShowAdd(false);
-      await loadAutomations();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const publishAutomation = async (automationId, engineRef) => {
-    if (!engineRef) {
-      setError('يرجى تحديد Typebot Public ID للرد الآلي قبل النشر.');
-      return;
-    }
-    try {
-      await apiRequest(`/v1/tenants/${tenantId}/automations/${automationId}/publish`, {
-        method: 'POST',
-        body: JSON.stringify({ engineRef, definitionSnapshot: {} }),
-      });
-      await loadAutomations();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  return (
-    <section className="native-page">
-      <div className="toolbar">
-        <div><strong>سجل مسارات الردود الآلية والـ Typebots</strong></div>
-        <button className="btn-primary" onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'إلغاء' : '+ تسجيل مسار جديد'}</button>
-      </div>
-
-      {error && <div className="inline-error">{error}</div>}
-
-      {showAdd && (
-        <form className="form-card" onSubmit={handleAdd}>
-          <h3>تسجيل مسار أتمتة جديد</h3>
-          <div className="form-grid">
-            <div className="form-group"><label>اسم المسار</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: بوت استقبال طلبات الصيانة" /></div>
-            <div className="form-group"><label>Typebot Public ID</label><input value={form.engineRef} onChange={(e) => setForm({ ...form, engineRef: e.target.value })} placeholder="my-custom-typebot-id" /></div>
-            <div className="form-group" style={{ gridColumn: '1 / -1' }}><label>الوصف</label><textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows="2" placeholder="وصف وظيفة ومسار البوت…" /></div>
-          </div>
-          <button className="btn-primary" disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ المسار'}</button>
-        </form>
-      )}
-
-      <div className="data-card">
-        {loading ? <div className="list-state"><div className="spinner" />جارٍ تحميل المسارات…</div> : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>اسم المسار</th>
-                <th>المحرك</th>
-                <th>Public ID (Typebot)</th>
-                <th>الإصدار</th>
-                <th>الحالة</th>
-                <th>إجراءات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {automations.length === 0 && <tr><td colSpan="6" className="empty-state">لا توجد مسارات أتمتة مسجلة بعد.</td></tr>}
-              {automations.map((a) => (
-                <tr key={a.id}>
-                  <td><strong>{a.name}</strong><br /><small style={{ color: 'var(--muted)' }}>{a.description}</small></td>
-                  <td><span className="badge badge-blue">{a.engine}</span></td>
-                  <td><code>{a.engine_ref || 'غير محدد'}</code></td>
-                  <td>v{a.current_version}</td>
-                  <td><span className={`badge ${a.status === 'published' ? 'badge-green' : 'badge-yellow'}`}>{a.status}</span></td>
-                  <td>
-                    {a.status !== 'published' && a.engine_ref && (
-                      <button className="btn-primary" style={{ padding: '4px 10px', fontSize: '11px' }} onClick={() => publishAutomation(a.id, a.engine_ref)}>نشر الإصدار</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ManychatView({ tenantId }) {
+function ResponseRulesView({ tenantId }) {
   const [keywords, setKeywords] = useState([]);
-  const [analytics, setAnalytics] = useState({ summary: [], recentEvents: [] });
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ name: '', keyword: '', matchType: 'contains', actionType: 'send_reply', replyText: '' });
@@ -899,12 +798,8 @@ function ManychatView({ tenantId }) {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const [kwRes, analyticsRes] = await Promise.all([
-        apiRequest(`/v1/tenants/${tenantId}/manychat/keywords`),
-        apiRequest(`/v1/tenants/${tenantId}/manychat/analytics`),
-      ]);
+      const kwRes = await apiRequest(`/v1/tenants/${tenantId}/manychat/keywords`);
       setKeywords(kwRes.data || []);
-      setAnalytics(analyticsRes.data || { summary: [], recentEvents: [] });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -950,43 +845,42 @@ function ManychatView({ tenantId }) {
   return (
     <section className="native-page">
       <div className="toolbar">
-        <div><strong>قواعد الكلمات المفتاحية وأدوات التسويق</strong></div>
-        <button className="btn-primary" onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'إلغاء' : '+ كلمة مفتاحية جديدة'}</button>
+        <div><strong>قواعد الاستجابة</strong></div>
+        <button className="btn-primary" onClick={() => setShowAdd(!showAdd)}>{showAdd ? 'إلغاء' : 'إضافة قاعدة'}</button>
       </div>
 
       {error && <div className="inline-error">{error}</div>}
 
       {showAdd && (
         <form className="form-card" onSubmit={handleAddKeyword}>
-          <h3>إضافة قاعدة كلمة مفتاحية جديدة</h3>
+          <h3>قاعدة جديدة</h3>
           <div className="form-grid">
             <div className="form-group"><label>اسم القاعدة</label><input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: استفسار عن الأسعار" /></div>
-            <div className="form-group"><label>الكلمة المفتاحية (Keyword)</label><input required value={form.keyword} onChange={(e) => setForm({ ...form, keyword: e.target.value })} placeholder="سعر، كم السعر، اسعار" /></div>
+            <div className="form-group"><label>الكلمة أو العبارة</label><input required value={form.keyword} onChange={(e) => setForm({ ...form, keyword: e.target.value })} placeholder="سعر، كم السعر، أسعار" /></div>
             <div className="form-group">
               <label>نوع التطابق</label>
               <select value={form.matchType} onChange={(e) => setForm({ ...form, matchType: e.target.value })}>
-                <option value="contains">تطابق جزئي (Contains)</option>
-                <option value="exact">تطابق تام (Exact)</option>
-                <option value="starts_with">يبدأ بـ (Starts with)</option>
-                <option value="regex">تعبير نمطي (Regex)</option>
+                <option value="contains">تظهر ضمن الرسالة</option>
+                <option value="exact">تطابق الرسالة كاملة</option>
+                <option value="starts_with">تبدأ بها الرسالة</option>
               </select>
             </div>
             <div className="form-group">
-              <label>الإجراء المتخذ</label>
+              <label>الاستجابة</label>
               <select value={form.actionType} onChange={(e) => setForm({ ...form, actionType: e.target.value })}>
-                <option value="send_reply">إرسال رد نصي مباشر</option>
-                <option value="ai_rag_query">البحث في قاعدة المعرفة (RAG)</option>
-                <option value="handoff_human">تحويل للموظف البشري</option>
+                <option value="send_reply">إرسال رد جاهز</option>
+                <option value="ai_rag_query">الإجابة من معلومات الشركة</option>
+                <option value="handoff_human">تحويل إلى موظف</option>
               </select>
             </div>
             {form.actionType === 'send_reply' && (
               <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-                <label>نص الرد المباشر</label>
-                <textarea value={form.replyText} onChange={(e) => setForm({ ...form, replyText: e.target.value })} rows="2" placeholder="اكتب نص الرد الآلي المباشر…" />
+                <label>نص الرد</label>
+                <textarea value={form.replyText} onChange={(e) => setForm({ ...form, replyText: e.target.value })} rows="2" placeholder="اكتب الرد الذي سيُرسل للعميل" />
               </div>
             )}
           </div>
-          <button className="btn-primary" disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ الكلمة المفتاحية'}</button>
+          <button className="btn-primary" disabled={saving}>{saving ? 'جارٍ الحفظ…' : 'حفظ القاعدة'}</button>
         </form>
       )}
 
@@ -996,22 +890,22 @@ function ManychatView({ tenantId }) {
             <thead>
               <tr>
                 <th>اسم القاعدة</th>
-                <th>الكلمة المفتاحية</th>
-                <th>نوع التطابق</th>
-                <th>الإجراء</th>
+                <th>الكلمة أو العبارة</th>
+                <th>طريقة المطابقة</th>
+                <th>الاستجابة</th>
                 <th>الحالة</th>
                 <th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
-              {keywords.length === 0 && <tr><td colSpan="6" className="empty-state">لم تُضف أي كلمات مفتاحية بعد.</td></tr>}
+              {keywords.length === 0 && <tr><td colSpan="6" className="empty-state">لا توجد قواعد استجابة بعد.</td></tr>}
               {keywords.map((k) => (
                 <tr key={k.id}>
                   <td><strong>{k.name}</strong></td>
-                  <td><code>{k.keyword}</code></td>
-                  <td><span className="badge badge-blue">{k.match_type}</span></td>
-                  <td><span className="badge badge-green">{k.action_type}</span></td>
-                  <td><span className={`badge ${k.status === 'active' ? 'badge-green' : 'badge-gray'}`}>{k.status}</span></td>
+                  <td>{k.keyword}</td>
+                  <td>{({ contains: 'ضمن الرسالة', exact: 'الرسالة كاملة', starts_with: 'بداية الرسالة' })[k.match_type] || k.match_type}</td>
+                  <td>{({ send_reply: 'رد جاهز', ai_rag_query: 'معلومات الشركة', handoff_human: 'تحويل إلى موظف' })[k.action_type] || k.action_type}</td>
+                  <td><span className={`badge ${k.status === 'active' ? 'badge-green' : 'badge-gray'}`}>{k.status === 'active' ? 'مفعّلة' : 'متوقفة'}</span></td>
                   <td>
                     <button className="btn-danger" onClick={() => deleteKeyword(k.id)}>حذف</button>
                   </td>
@@ -1026,7 +920,7 @@ function ManychatView({ tenantId }) {
 }
 
 function MetaChannelsView({ tenantId, isAdmin }) {
-  const [data, setData] = useState({ channels: [], outbound: [], events: [], decisions: [], configuration: null });
+  const [data, setData] = useState({ channels: [], configuration: null });
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -1037,7 +931,7 @@ function MetaChannelsView({ tenantId, isAdmin }) {
     setLoading(true);
     try {
       const response = await apiRequest(`/v1/tenants/${tenantId}/meta/status`);
-      setData(response.data || { channels: [], outbound: [], events: [], decisions: [], configuration: null });
+      setData(response.data || { channels: [], configuration: null });
       setError('');
     } catch (err) {
       setError(err.message);
@@ -1047,7 +941,15 @@ function MetaChannelsView({ tenantId, isAdmin }) {
   };
   useEffect(() => {
     load();
-    const sessionId = new URLSearchParams(location.search).get('meta_onboarding');
+    const { sessionId, error: oauthError } = readMetaOAuthCallback(location.search);
+    if (oauthError) {
+      setError('تعذر إكمال ربط Meta. أعد المحاولة وتأكد من منح الصلاحيات المطلوبة.');
+      const url = new URL(location.href);
+      url.searchParams.delete('meta_error');
+      url.searchParams.delete('meta_onboarding');
+      history.replaceState({}, '', url);
+      return;
+    }
     if (sessionId && tenantId) {
       apiRequest(`/v1/tenants/${tenantId}/meta/oauth/${sessionId}/assets`)
         .then((response) => setOnboarding({ sessionId, provider: response.data.provider, assets: response.data.assets || [] }))
@@ -1077,6 +979,14 @@ function MetaChannelsView({ tenantId, isAdmin }) {
       await load();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
+  const syncInstagram = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      await apiRequest(`/v1/tenants/${tenantId}/meta/oauth/sync`, { method: 'POST' });
+      await load();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  };
   const disconnectChannel = async (channel) => {
     if (!window.confirm(`سيتم إيقاف ${channel.display_name} وحذف رمز الوصول المحفوظ. هل تريد المتابعة؟`)) return;
     setBusy(true);
@@ -1088,67 +998,53 @@ function MetaChannelsView({ tenantId, isAdmin }) {
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   };
   const configuration = data.configuration;
+  const providerLabel = { messenger: 'Facebook', instagram: 'Instagram', whatsapp: 'WhatsApp' };
+  const statusLabel = { active: 'متصل', disabled: 'غير متصل', pending: 'قيد الربط', error: 'يحتاج مراجعة' };
   return (
     <section className="native-page">
       <div className="toolbar">
-        <div><strong>قنوات Meta وحالة التسليم</strong><div><small>الأسرار محفوظة على الخادم ولا تظهر للموظفين.</small></div></div>
-        <button className="btn-primary" onClick={load} disabled={loading}>تحديث</button>
+        <div><strong>الحسابات المرتبطة</strong></div>
+        <button className="btn-primary" onClick={syncInstagram} disabled={loading || busy}>{busy ? 'جارٍ المزامنة…' : 'مزامنة المحادثات'}</button>
       </div>
       {error && <div className="inline-error">{error}</div>}
       {configuration && !configuration.ready && (
-        <div className="inline-error">
-          <strong>ربط Meta غير مهيأ بعد.</strong>
-          <div>الإعدادات الناقصة على الخادم: {configuration.missingSettings.join('، ')}</div>
-        </div>
+        <div className="inline-error">إعداد ربط الحسابات غير مكتمل.</div>
       )}
       {configuration?.ready && !configuration.publicHttps && (
-        <div className="inline-error">الإعداد موجود محلياً، لكن Meta تحتاج رابط HTTPS عاماً قبل استقبال الرسائل الحقيقية.</div>
-      )}
-      {configuration?.publicHttps && (
-        <div className="connection-summary">
-          <span className="status-dot" />
-          <div><strong>بوابة Meta العامة جاهزة</strong><small>{configuration.webhookUrl}</small></div>
-        </div>
+        <div className="inline-error">تعذر استقبال الرسائل حالياً. أكمل إعداد عنوان الخدمة الآمن.</div>
       )}
       {isAdmin && (
-        <div className="form-card"><h3>ربط حساب حقيقي عبر Meta</h3><p>تتم الموافقة داخل Meta، ثم تعود لاختيار الصفحة أو حساب Instagram. اكتب البريد وكلمة المرور داخل نافذة Meta الرسمية فقط؛ لا يحفظهما My AI Desk.</p>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <button type="button" className="btn-primary" disabled={busy || !configuration?.ready} onClick={() => startOnboarding('messenger')}>ربط Facebook Messenger</button>
-            <button type="button" className="btn-primary" disabled={busy || !configuration?.ready} onClick={() => startOnboarding('instagram')}>ربط Instagram المرتبط بالصفحة</button>
+        <div className="channel-connect"><div><h2>إضافة حساب</h2><p>اختر القناة، ثم وافق على الوصول من صفحة الحساب الرسمية.</p></div>
+          <div className="channel-actions">
+            <button type="button" className="btn-secondary" disabled={busy || !configuration?.ready} onClick={() => startOnboarding('messenger')}>إضافة Facebook</button>
+            <button type="button" className="btn-primary" disabled={busy || !configuration?.ready} onClick={() => startOnboarding('instagram')}>إضافة Instagram</button>
           </div></div>
       )}
       {onboarding.sessionId && (
-        <div className="form-card"><h3>اختر الحساب الذي سيُربط بهذه الشركة</h3>
-          {!onboarding.assets.length && <p>لم تُرجع Meta حسابات متاحة لهذا المستخدم.</p>}
-          {onboarding.assets.map((asset) => <button type="button" key={asset.id} className="btn-primary" style={{ marginInlineEnd: 8, marginBottom: 8 }} disabled={busy} onClick={() => completeOnboarding(asset.id)}>{asset.name} — {asset.id}</button>)}
+        <div className="account-picker"><h2>اختر الحساب</h2>
+          {!onboarding.assets.length && <p>لا توجد حسابات متاحة للربط.</p>}
+          <div className="account-options">{onboarding.assets.map((asset) => <button type="button" key={asset.id} className="btn-secondary" disabled={busy} onClick={() => completeOnboarding(asset.id)}>{asset.name}</button>)}</div>
         </div>
       )}
-      {data.channels.some((channel) => channel.status === 'active') && (
-        <div className="form-card">
-          <h3>اختبار Instagram الحقيقي</h3>
-          <p>أرسل رسالة خاصة من حساب Instagram آخر إلى الحساب المرتبط. ستظهر الرسالة أدناه وفي صندوق المحادثات، ثم يظهر الرد وحالة تسليمه دون أي اختبار وهمي.</p>
-        </div>
-      )}
-      <div className="data-card"><table className="data-table"><thead><tr><th>القناة</th><th>المعرف</th><th>الحالة</th><th>آخر حدث</th><th>الخطأ</th><th>إجراء</th></tr></thead><tbody>
-        {!data.channels.length && <tr><td colSpan="6" className="empty-state">لا توجد قنوات Meta بعد.</td></tr>}
-        {data.channels.map((channel) => <tr key={channel.id}><td>{channel.display_name}<br/><small>{channel.provider}</small></td><td><code>{channel.external_account_id}</code></td><td><span className={`badge ${channel.status === 'active' ? 'badge-green' : 'badge-yellow'}`}>{channel.status}</span></td><td>{channel.last_event_at ? new Date(channel.last_event_at).toLocaleString('ar') : '—'}</td><td>{channel.last_error || '—'}</td><td>{isAdmin && channel.status !== 'disabled' ? <button className="btn-danger" disabled={busy} onClick={() => disconnectChannel(channel)}>إلغاء الربط</button> : '—'}</td></tr>)}
-      </tbody></table></div>
-      <h3>آخر الرسائل والأحداث الواردة</h3>
-      <div className="data-card"><table className="data-table"><thead><tr><th>القناة</th><th>نوع الحدث</th><th>الحالة</th><th>وقت الاستقبال</th><th>الخطأ</th></tr></thead><tbody>
-        {!data.events.length && <tr><td colSpan="5" className="empty-state">لم تصل رسائل من Meta بعد.</td></tr>}
-        {data.events.map((event) => <tr key={event.id}><td>{event.provider}</td><td><code>{event.event_type}</code></td><td><span className={`badge ${event.status === 'processed' ? 'badge-green' : 'badge-yellow'}`}>{event.status}</span></td><td>{new Date(event.received_at).toLocaleString('ar')}</td><td>{event.error_message || '—'}</td></tr>)}
-      </tbody></table></div>
-      <h3>آخر الردود الصادرة</h3>
-      <div className="data-card"><table className="data-table"><thead><tr><th>الرد</th><th>الحالة</th><th>المحاولات</th><th>الوقت</th></tr></thead><tbody>
-        {!data.outbound.length && <tr><td colSpan="4" className="empty-state">لا توجد ردود بعد.</td></tr>}
-        {data.outbound.map((item) => <tr key={item.id}><td>{item.content?.text}</td><td><span className={`badge ${['sent','delivered','read'].includes(item.status) ? 'badge-green' : 'badge-yellow'}`}>{item.status}</span></td><td>{item.attempt_count}</td><td>{new Date(item.created_at).toLocaleString('ar')}</td></tr>)}
-      </tbody></table></div>
+      <div className="channel-list">
+        {loading && <div className="list-state"><div className="spinner" />جارٍ تحميل الحسابات…</div>}
+        {!loading && !data.channels.length && <div className="empty-state">لم يُربط أي حساب بهذه الشركة بعد.</div>}
+        {!loading && data.channels.map((channel) => (
+          <article className="channel-row" key={channel.id}>
+            <span className="channel-logo">{(providerLabel[channel.provider] || channel.provider).slice(0, 1)}</span>
+            <div className="channel-copy"><strong>{channel.display_name}</strong><small>{providerLabel[channel.provider] || channel.provider}</small>{channel.last_error && <span className="channel-error">يحتاج هذا الحساب إلى مراجعة.</span>}</div>
+            <span className={`badge ${channel.status === 'active' ? 'badge-green' : 'badge-yellow'}`}>{statusLabel[channel.status] || channel.status}</span>
+            {isAdmin && channel.status !== 'disabled' && <button className="btn-danger" disabled={busy} onClick={() => disconnectChannel(channel)}>إلغاء الربط</button>}
+          </article>
+        ))}
+      </div>
     </section>
   );
 }
 
 function App() {
-  const initial = new URLSearchParams(location.search).get('service');
+  const requestedService = new URLSearchParams(location.search).get('service');
+  const initial = ({ manychat: 'rules', automations: 'flows' })[requestedService] || requestedService;
   const [active, setActive] = useState(services[initial] ? initial : 'overview');
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -1171,9 +1067,9 @@ function App() {
       const response = await apiRequest('/v1/tenants');
       const list = response.data || [];
       setTenants(list);
-      if (list.length > 0 && !selectedTenantId) {
-        setSelectedTenantId(list[0].id);
-      }
+      setSelectedTenantId((currentId) => (
+        list.some((tenant) => tenant.id === currentId) ? currentId : list[0]?.id || ''
+      ));
     } catch (err) {
       console.error('Failed to load tenants:', err);
     }
@@ -1239,11 +1135,18 @@ function App() {
     setActive(key);
     if (updateHistory) history.replaceState({}, '', `?service=${key}`);
     if (services[key].native) return;
+    const targetTenantId = key === 'inbox' ? selectedTenantId || tenants[0]?.id || '' : selectedTenantId;
+    if (key === 'inbox' && !targetTenantId) {
+      finishFrameLoading('inbox');
+      setFrameErrors((errors) => ({ ...errors, inbox: 'أنشئ شركة أولًا، ثم اربطها بصندوق المحادثات.' }));
+      return;
+    }
+    if (key === 'inbox' && targetTenantId !== selectedTenantId) setSelectedTenantId(targetTenantId);
     const needsLoad = shouldLoadEmbeddedFrame({
       key,
       loadedFrames,
       frameTenantIds,
-      selectedTenantId,
+      selectedTenantId: targetTenantId,
       forceReload,
     });
     if (!needsLoad) return;
@@ -1253,16 +1156,11 @@ function App() {
     if (key === 'inbox') {
       const sessionRequestId = chatwootSessionRequest.current + 1;
       chatwootSessionRequest.current = sessionRequestId;
-      if (!selectedTenantId) {
-        finishFrameLoading('inbox');
-        setFrameErrors((errors) => ({ ...errors, inbox: 'اختر شركة مرتبطة بصندوق محادثات أولًا.' }));
-        return;
-      }
-      setFrameTenantIds((ids) => ({ ...ids, inbox: selectedTenantId }));
+      setFrameTenantIds((ids) => ({ ...ids, inbox: targetTenantId }));
       try {
         const response = await apiRequest('/v1/sessions/chatwoot', {
           method: 'POST',
-          body: JSON.stringify({ tenantId: selectedTenantId }),
+          body: JSON.stringify({ tenantId: targetTenantId }),
         });
         if (chatwootSessionRequest.current !== sessionRequestId) return;
         setFrameUrls((urls) => ({ ...urls, inbox: response.data.url }));
@@ -1276,7 +1174,7 @@ function App() {
 
   const frameSource = (key, item) => (
     key === 'flows'
-      ? `${serviceUrl('flows')}/sso/typebot.html?return=${encodeURIComponent(item.url)}`
+      ? `${serviceUrl('flows')}/sso/typebot.html?framePolicy=2&return=${encodeURIComponent(item.url)}`
       : frameUrls[key] || ''
   );
 
@@ -1314,7 +1212,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark">M</span><span><strong>{brand}</strong><small>Operations workspace</small></span></div>
+        <div className="brand"><span className="brand-mark">M</span><span><strong>{brand}</strong><small>مساحة إدارة العمليات</small></span></div>
         <nav aria-label="التنقل الرئيسي">
           {navigationGroups.map((group) => (
             <div className="nav-group" key={group}>
@@ -1341,8 +1239,6 @@ function App() {
           <div className="header-actions">
             {installPrompt && <button type="button" className="install-app" onClick={installDesktopApp}>تثبيت التطبيق</button>}
             {showTenantBar && <TenantBar tenants={tenants} selectedId={selectedTenantId} onSelect={setSelectedTenantId} />}
-            {!service.native && <span className="session-badge"><span className="status-dot"/> جلسة موحّدة</span>}
-            {!service.native && effectiveActive !== 'inbox' && <a className="open-new" href={service.url} target="_blank" rel="noreferrer"><Icon name="external" size={16} /> فتح مستقلاً</a>}
           </div>
         </header>
 
@@ -1352,15 +1248,14 @@ function App() {
         {effectiveActive === 'products' && <ProductsView tenantId={selectedTenantId} />}
         {effectiveActive === 'knowledge' && <KnowledgeView tenantId={selectedTenantId} />}
         {effectiveActive === 'ai' && <AiAgentView tenantId={selectedTenantId} />}
-        {effectiveActive === 'automations' && <AutomationsView tenantId={selectedTenantId} />}
-        {effectiveActive === 'manychat' && <ManychatView tenantId={selectedTenantId} />}
+        {effectiveActive === 'rules' && <ResponseRulesView tenantId={selectedTenantId} />}
         {effectiveActive === 'channels' && <MetaChannelsView tenantId={selectedTenantId} isAdmin={isAdmin} />}
 
         {Object.keys(loadedFrames).length > 0 && (
           <section className={`frame-wrap ${service.native ? 'frame-wrap-hidden' : ''}`}>
             {Object.entries(services).filter(([key, item]) => !item.native && loadedFrames[key]).map(([key, item]) => (
               <React.Fragment key={key}>
-                {loadingFrames[key] && effectiveActive === key && <div className="frame-loading"><div className="spinner"/><strong>جارٍ تجهيز {item.label}</strong><span>تُستخدم جلسة الدخول الحالية ولن يُطلب منك تسجيل جديد.</span></div>}
+                {loadingFrames[key] && effectiveActive === key && <div className="frame-loading"><div className="spinner"/><strong>جارٍ فتح {item.label}</strong></div>}
                 {frameErrors[key] && effectiveActive === key && (
                   <div className="frame-loading">
                     <div className="error-card frame-error-card">

@@ -51,6 +51,14 @@ create_or_update_client() {
 PUBLIC_BASE="${PUBLIC_SCHEME:-https}://dashboard.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}"
 FLOWS_BASE="${PUBLIC_SCHEME:-https}://flows.${BASE_DOMAIN}${PUBLIC_PORT_SUFFIX:-}"
 
+# Typebot starts its OIDC flow inside the dashboard iframe. Keycloak's default
+# SAMEORIGIN policy blocks that navigation even when the user already has a
+# valid realm session. Allow only the configured dashboard origin to frame the
+# realm login flow; all other origins remain blocked by frame-ancestors.
+"$KC" update realms/unified \
+  -s 'browserSecurityHeaders.xFrameOptions=' \
+  -s "browserSecurityHeaders.contentSecurityPolicy=frame-src 'self'; frame-ancestors ${PUBLIC_BASE}; object-src 'none';"
+
 create_or_update_client unified-dashboard true "" \
   "[\"${PUBLIC_BASE}/*\"]" \
   "[\"${PUBLIC_BASE}\"]"
