@@ -11,6 +11,10 @@ const parseJson = (value, fallback = {}) => {
   try { return JSON.parse(value || '{}'); } catch { return fallback; }
 };
 
+const conversationalEventTypes = new Set(['message', 'postback']);
+const mirroredEventTypes = new Set(['message', 'outbound_message', 'postback', 'comment', 'live_comment', 'standby_message', 'standby_postback']);
+const pausedEventTypes = new Set(['pass_thread_control', 'request_thread_control', 'messaging_handover', 'standby_event', 'standby_message', 'standby_postback']);
+
 async function resolveChannel(db, event) {
   const result = await db.query(
     `SELECT * FROM channel_connections
@@ -35,7 +39,7 @@ async function claimEvent(db, channel, event) {
   return result.rows[0]?.id || null;
 }
 
-async function upsertMetaContact(db, channel, event) {
+export async function upsertMetaContact(db, channel, event) {
   return db.transaction(async (client) => {
     const existing = await client.query(
       `SELECT ci.contact_id, cp.display_name
@@ -72,6 +76,42 @@ async function openMessagingWindow(db, channel, event, contactId) {
        consent_source = 'user_initiated_message', updated_at = now()`,
     [channel.tenant_id, channel.id, contactId, event.senderId],
   );
+}
+
+async function recordContactEventState(db, channel, event, contactId) {
+  const nextAutomationState = pausedEventTypes.has(event.eventType)
+    ? 'paused'
+    : event.eventType === 'take_thread_control' ? 'active' : null;
+  const providerContext = {
+    lastEventType: event.eventType,
+    ...(event.referral ? { referral: event.referral } : {}),
+    ...(event.optin ? { optin: event.optin } : {}),
+    ...(event.control ? { control: event.control } : {}),
+    ...(event.providerMessageId ? { providerMessageId: event.providerMessageId } : {}),
+  };
+  await db.query(
+    `INSERT INTO channel_contact_permissions
+     (tenant_id, channel_connection_id, contact_id, provider_recipient_id)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (channel_connection_id, contact_id) DO NOTHING`,
+    [channel.tenant_id, channel.id, contactId, event.senderId],
+  );
+  const result = await db.query(
+    `UPDATE channel_contact_permissions SET
+       provider_recipient_id = $4,
+       automation_state = COALESCE($5, automation_state),
+       marketing_opt_in_at = CASE WHEN $6 THEN now() ELSE marketing_opt_in_at END,
+       consent_source = CASE WHEN $6 THEN 'meta_messaging_optin' ELSE consent_source END,
+       last_provider_event_type = $7,
+       last_provider_event_at = now(),
+       provider_context = provider_context || $8::jsonb,
+       updated_at = now()
+     WHERE channel_connection_id = $2 AND contact_id = $3
+     RETURNING automation_state`,
+    [channel.tenant_id, channel.id, contactId, event.senderId, nextAutomationState,
+      event.eventType === 'messaging_optin', event.eventType, JSON.stringify(providerContext)],
+  );
+  return result.rows[0]?.automation_state || 'active';
 }
 
 function keywordReply(rule) {
@@ -125,22 +165,32 @@ export function createMetaGateway({ db, config }) {
           results.push({ eventId: event.eventId, status: 'processed', eventType: event.eventType });
           continue;
         }
-        if (!event.text || !event.senderId) {
+        if (!event.senderId) {
           await db.query(
-            `UPDATE provider_webhook_events SET status = 'ignored', processed_at = now() WHERE id = $1`,
+            `UPDATE provider_webhook_events SET status = 'processed', processed_at = now() WHERE id = $1`,
             [ledgerId],
           );
-          results.push({ eventId: event.eventId, status: 'ignored' });
+          results.push({ eventId: event.eventId, status: 'processed', action: 'event_recorded' });
           continue;
         }
         const contactId = await upsertMetaContact(db, channel, event);
-        if (event.eventType === 'message') await openMessagingWindow(db, channel, event, contactId);
-        await mirrorInboundToChatwoot({ db, config, channel, event, contactId });
+        if (conversationalEventTypes.has(event.eventType)) await openMessagingWindow(db, channel, event, contactId);
+        const automationState = await recordContactEventState(db, channel, event, contactId);
+        if (mirroredEventTypes.has(event.eventType) && event.text) {
+          await mirrorInboundToChatwoot({
+            db, config, channel, event, contactId,
+            direction: event.eventType === 'outbound_message' ? 'outgoing' : 'incoming',
+          });
+        }
         // Comment-to-DM uses provider-specific private-reply endpoints and review rules.
         // Never send a normal Messenger/Instagram DM merely because someone commented.
-        const decision = event.eventType === 'comment'
+        const decision = ['comment', 'live_comment'].includes(event.eventType)
           ? { action: 'comment_pending_review', reply: null }
-          : await decideReply({ db, config, channel, event, contactId });
+          : conversationalEventTypes.has(event.eventType) && event.text && automationState === 'active'
+            ? await decideReply({ db, config, channel, event, contactId })
+            : conversationalEventTypes.has(event.eventType) && automationState === 'paused'
+              ? { action: 'automation_paused', reply: null }
+              : { action: 'event_recorded', reply: null };
         const outbox = decision.reply ? await enqueueOutboundMessage(db, {
           tenantId: channel.tenant_id,
           channelConnectionId: channel.id,
@@ -191,8 +241,12 @@ export function metaPublicRoutes({ db, config }) {
   });
 
   router.post('/webhooks/meta', async (req, res) => {
-    if (!config.META_APP_SECRET) return res.status(503).json({ error: 'meta_not_configured' });
-    if (!verifyMetaSignature(req.rawBody, req.get('x-hub-signature-256'), config.META_APP_SECRET)) {
+    const signingSecrets = [...new Set([
+      config.META_INSTAGRAM_APP_SECRET,
+      config.META_APP_SECRET,
+    ].filter(Boolean))];
+    if (!signingSecrets.length) return res.status(503).json({ error: 'meta_not_configured' });
+    if (!signingSecrets.some((secret) => verifyMetaSignature(req.rawBody, req.get('x-hub-signature-256'), secret))) {
       return res.status(401).json({ error: 'invalid_meta_signature' });
     }
     const results = await gateway.processPayload(req.body, req.log);
@@ -231,8 +285,8 @@ export function metaTenantRoutes({ db, config }) {
       ),
     ]);
     const requiredSettings = [
-      ['META_APP_ID', config.META_APP_ID],
-      ['META_APP_SECRET', config.META_APP_SECRET],
+      ['META_INSTAGRAM_APP_ID_OR_META_APP_ID', config.META_INSTAGRAM_APP_ID || config.META_APP_ID],
+      ['META_INSTAGRAM_APP_SECRET_OR_META_APP_SECRET', config.META_INSTAGRAM_APP_SECRET || config.META_APP_SECRET],
       ['META_VERIFY_TOKEN', config.META_VERIFY_TOKEN],
       ['META_OAUTH_REDIRECT_URI', config.META_OAUTH_REDIRECT_URI],
       ['CREDENTIAL_ENCRYPTION_KEY', config.CREDENTIAL_ENCRYPTION_KEY],

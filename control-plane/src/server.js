@@ -4,6 +4,7 @@ import { createDatabase } from './db.js';
 import { migrate } from './migrate.js';
 import { createApp } from './app.js';
 import { createOutboxWorker } from './outbox/outbox.js';
+import { createMetaMaintenanceWorker } from './meta/token-maintenance.js';
 
 const config = loadConfig();
 await migrate(config.DATABASE_URL);
@@ -18,6 +19,7 @@ if (config.REDIS_URL) {
 
 const app = createApp({ config, db, redis });
 const outboxWorker = createOutboxWorker({ db, config });
+const metaMaintenanceWorker = createMetaMaintenanceWorker({ db, config });
 const server = app.listen(config.PORT, '0.0.0.0', () => {
   console.log(`Control plane listening on port ${config.PORT}`);
 });
@@ -25,6 +27,7 @@ const server = app.listen(config.PORT, '0.0.0.0', () => {
 async function shutdown(signal) {
   console.log(`Received ${signal}; shutting down`);
   outboxWorker.stop();
+  metaMaintenanceWorker.stop();
   server.close(async () => {
     if (redis) await redis.quit();
     await db.close();

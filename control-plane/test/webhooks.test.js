@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createApp } from '../src/app.js';
+import { bridgeMessageIdempotencyKey } from '../src/routes/webhooks.js';
 import { getIncomingMessage } from '../src/bridge/webhook.js';
 import { extractTypebotReplies } from '../src/bridge/replies.js';
 import { createBridgeQueue } from '../src/bridge/queue.js';
@@ -33,6 +34,22 @@ test('extracts incoming message from webhook body', () => {
   assert.equal(message.inboxId, '2');
   assert.equal(message.conversationId, '3');
   assert.equal(message.messageId, '100');
+});
+
+test('bridge idempotency keys are scoped beyond the provider message id', () => {
+  const first = bridgeMessageIdempotencyKey({
+    accountId: '1', inboxId: '2', conversationId: '3', messageId: '100',
+  });
+  const otherAccount = bridgeMessageIdempotencyKey({
+    accountId: '9', inboxId: '2', conversationId: '3', messageId: '100',
+  });
+  const otherConversation = bridgeMessageIdempotencyKey({
+    accountId: '1', inboxId: '2', conversationId: '8', messageId: '100',
+  });
+
+  assert.notEqual(first, otherAccount);
+  assert.notEqual(first, otherConversation);
+  assert.equal(first, 'bridge:message:1:2:3:100');
 });
 
 test('extracts typebot replies from rich text payload', () => {

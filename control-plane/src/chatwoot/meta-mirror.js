@@ -2,14 +2,14 @@ const parseJson = (value) => {
   try { return JSON.parse(value || '{}'); } catch { return {}; }
 };
 
-function credential(config, channel) {
+export function chatwootCredential(config, channel) {
   const byRef = parseJson(config.BRIDGE_CREDENTIALS_JSON);
   const byAccount = parseJson(config.CHATWOOT_TOKENS_JSON);
   const reference = channel.config?.chatwootCredentialRef || channel.credential_ref;
   return byRef[reference] || byAccount[channel.chatwoot_account_id] || config.CHATWOOT_API_TOKEN;
 }
 
-async function request(config, token, path, options = {}, fetchImpl = fetch) {
+export async function chatwootRequest(config, token, path, options = {}, fetchImpl = fetch) {
   const response = await fetchImpl(`${config.CHATWOOT_BASE_URL}${path}`, {
     ...options,
     signal: AbortSignal.timeout(30000),
@@ -33,9 +33,11 @@ function contactShape(body, inboxId) {
   return { contactId: contact.id, sourceId: inbox?.source_id };
 }
 
-export async function mirrorInboundToChatwoot({ db, config, channel, event, contactId, fetchImpl = fetch }) {
+export async function mirrorInboundToChatwoot({
+  db, config, channel, event, contactId, direction = 'incoming', fetchImpl = fetch,
+}) {
   if (!channel.chatwoot_account_id || !channel.chatwoot_inbox_id) return { skipped: true };
-  const token = credential(config, channel);
+  const token = chatwootCredential(config, channel);
   if (!token || token.startsWith('CHANGE_ME')) {
     const error = new Error(`No Chatwoot token for Meta channel ${channel.id}`);
     error.code = 'chatwoot_credential_missing';
@@ -48,7 +50,7 @@ export async function mirrorInboundToChatwoot({ db, config, channel, event, cont
   );
   if (!link.rowCount) {
     const accountId = encodeURIComponent(channel.chatwoot_account_id);
-    const createdContact = await request(config, token, `/api/v1/accounts/${accountId}/contacts`, {
+    const createdContact = await chatwootRequest(config, token, `/api/v1/accounts/${accountId}/contacts`, {
       method: 'POST',
       body: JSON.stringify({
         inbox_id: Number(channel.chatwoot_inbox_id),
@@ -59,7 +61,7 @@ export async function mirrorInboundToChatwoot({ db, config, channel, event, cont
     }, fetchImpl);
     const shaped = contactShape(createdContact, channel.chatwoot_inbox_id);
     if (!shaped.contactId || !shaped.sourceId) throw new Error('Chatwoot did not return a contact inbox source ID');
-    const conversation = await request(config, token, `/api/v1/accounts/${accountId}/conversations`, {
+    const conversation = await chatwootRequest(config, token, `/api/v1/accounts/${accountId}/conversations`, {
       method: 'POST',
       body: JSON.stringify({
         source_id: shaped.sourceId,
@@ -83,15 +85,16 @@ export async function mirrorInboundToChatwoot({ db, config, channel, event, cont
     );
   }
   const row = link.rows[0];
-  await request(config, token,
+  await chatwootRequest(config, token,
     `/api/v1/accounts/${encodeURIComponent(channel.chatwoot_account_id)}/conversations/${encodeURIComponent(row.chatwoot_conversation_id)}/messages`, {
       method: 'POST',
       body: JSON.stringify({
         content: event.text,
-        message_type: 'incoming',
+        message_type: direction,
         private: false,
         content_type: 'text',
         source_id: event.eventId,
+        created_at: Math.floor(Number(event.timestamp || Date.now()) / 1000),
       }),
     }, fetchImpl);
   return { skipped: false, conversationId: row.chatwoot_conversation_id };
@@ -99,7 +102,7 @@ export async function mirrorInboundToChatwoot({ db, config, channel, event, cont
 
 export async function mirrorOutboundToChatwoot({ db, config, channel, message, fetchImpl = fetch }) {
   if (!channel.chatwoot_account_id || !channel.chatwoot_inbox_id) return { skipped: true };
-  const token = credential(config, channel);
+  const token = chatwootCredential(config, channel);
   if (!token || token.startsWith('CHANGE_ME')) return { skipped: true };
   const link = await db.query(
     `SELECT chatwoot_conversation_id FROM channel_conversation_links
@@ -107,7 +110,7 @@ export async function mirrorOutboundToChatwoot({ db, config, channel, message, f
     [message.channel_connection_id, message.provider_recipient_id],
   );
   if (!link.rowCount || !link.rows[0].chatwoot_conversation_id) return { skipped: true };
-  await request(config, token,
+  await chatwootRequest(config, token,
     `/api/v1/accounts/${encodeURIComponent(channel.chatwoot_account_id)}/conversations/${encodeURIComponent(link.rows[0].chatwoot_conversation_id)}/messages`, {
       method: 'POST',
       body: JSON.stringify({

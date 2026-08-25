@@ -29,6 +29,12 @@ const parseJson = (str, fallback = {}) => {
   try { return JSON.parse(str || '{}'); } catch { return fallback; }
 };
 
+export function bridgeMessageIdempotencyKey(message) {
+  const scope = [message.accountId, message.inboxId, message.conversationId, message.messageId]
+    .map((value) => encodeURIComponent(String(value)));
+  return `bridge:message:${scope.join(':')}`;
+}
+
 export function webhookRoutes({ db, config, redis }) {
   const router = Router();
   const webhookSecret = config.WEBHOOK_SHARED_SECRET || config.BRIDGE_SERVICE_SECRET;
@@ -83,7 +89,7 @@ export function webhookRoutes({ db, config, redis }) {
   };
 
   const processMessage = async (message) => {
-    const idempotencyKey = `bridge:message:${message.messageId}`;
+    const idempotencyKey = bridgeMessageIdempotencyKey(message);
     if (redis) {
       const claimed = await redis.set(idempotencyKey, 'processing', { NX: true, EX: 300 });
       if (!claimed) return { duplicate: true };

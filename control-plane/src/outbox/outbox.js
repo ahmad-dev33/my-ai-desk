@@ -44,6 +44,30 @@ function requestBody(channel, message) {
   return { recipient: { id: message.provider_recipient_id }, message: { text }, messaging_type: 'RESPONSE' };
 }
 
+function retryAfterSeconds(response) {
+  const value = response.headers?.get?.('retry-after');
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, Math.ceil(seconds));
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, Math.ceil((date - Date.now()) / 1000)) : 0;
+}
+
+function usageBackoffSeconds(response) {
+  const names = ['x-app-usage', 'x-page-usage'];
+  for (const name of names) {
+    const value = response.headers?.get?.(name);
+    if (!value) continue;
+    try {
+      const usage = Object.values(JSON.parse(value)).map(Number).filter(Number.isFinite);
+      if (usage.some((percentage) => percentage >= 90)) return 60;
+    } catch {
+      // Invalid provider telemetry must not fail an otherwise valid delivery.
+    }
+  }
+  return 0;
+}
+
 export async function deliverOutboundMessage({ config, channel, message, providerCredential = null, fetchImpl = fetch }) {
   const credentials = parseCredentials(config.META_CREDENTIALS_JSON);
   const credential = providerCredential || credentials[channel.credential_ref];
@@ -64,12 +88,21 @@ export async function deliverOutboundMessage({ config, channel, message, provide
     const error = new Error(body.error?.message || `Meta delivery failed with ${response.status}`);
     error.code = body.error?.code ? `meta_${body.error.code}` : 'meta_delivery_failed';
     error.retryable = response.status === 429 || response.status >= 500;
+    error.retryAfterSeconds = Math.max(retryAfterSeconds(response), usageBackoffSeconds(response));
     throw error;
   }
-  return { providerMessageId: body.message_id || body.messages?.[0]?.id || body.recipient_id, response: body };
+  return {
+    providerMessageId: body.message_id || body.messages?.[0]?.id || body.recipient_id,
+    providerBackoffSeconds: usageBackoffSeconds(response),
+    response: body,
+  };
 }
 
-async function claimNext(db) {
+async function claimNext(db, config) {
+  const channelIntervalMs = Number(config.META_OUTBOUND_CHANNEL_INTERVAL_MS || 1000);
+  const contactCooldownMs = Number(config.META_OUTBOUND_CONTACT_COOLDOWN_MS || 1500);
+  const replyWindowMs = Number(config.META_OUTBOUND_REPLY_WINDOW_MS || 600000);
+  const maxReplies = Number(config.META_OUTBOUND_MAX_REPLIES_PER_WINDOW || 6);
   return db.transaction(async (client) => {
     await client.query(
       `UPDATE outbound_messages om SET status = 'dead',
@@ -96,8 +129,26 @@ async function claimNext(db) {
           OR (om.status = 'processing' AND om.locked_at < now() - interval '5 minutes'))
          AND om.attempt_count < om.max_attempts AND cc.status = 'active'
          AND permission.messaging_window_expires_at > now()
+         AND NOT EXISTS (
+           SELECT 1 FROM outbound_messages recent_channel
+           WHERE recent_channel.channel_connection_id = om.channel_connection_id
+             AND recent_channel.sent_at > now() - ($1 * interval '1 millisecond')
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM outbound_messages recent_contact
+           WHERE recent_contact.channel_connection_id = om.channel_connection_id
+             AND recent_contact.contact_id = om.contact_id
+             AND recent_contact.sent_at > now() - ($2 * interval '1 millisecond')
+         )
+         AND (
+           SELECT count(*) FROM outbound_messages reply_window
+           WHERE reply_window.channel_connection_id = om.channel_connection_id
+             AND reply_window.contact_id = om.contact_id
+             AND reply_window.sent_at > now() - ($3 * interval '1 millisecond')
+         ) < $4
        ORDER BY om.created_at ASC
        FOR UPDATE OF om SKIP LOCKED LIMIT 1`,
+      [channelIntervalMs, contactCooldownMs, replyWindowMs, maxReplies],
     );
     if (!result.rowCount) return null;
     const row = result.rows[0];
@@ -111,9 +162,10 @@ async function claimNext(db) {
 }
 
 async function markFailure(db, message, error) {
-  const dead = !error.retryable && error.code === 'meta_credential_missing'
-    || message.attempt_count >= message.max_attempts;
-  const delaySeconds = Math.min(900, 2 ** Math.max(0, message.attempt_count - 1) * 5);
+  const dead = !error.retryable || message.attempt_count >= message.max_attempts;
+  const exponentialDelay = 2 ** Math.max(0, message.attempt_count - 1) * 5;
+  const providerDelay = Number(error.retryAfterSeconds || 0);
+  const delaySeconds = Math.min(86400, Math.max(exponentialDelay, providerDelay));
   await db.query(
     `UPDATE outbound_messages SET status = $2, last_error = $3, locked_at = NULL,
      next_attempt_at = now() + ($4 * interval '1 second'), updated_at = now() WHERE id = $1`,
@@ -125,12 +177,13 @@ export function createOutboxWorker({ db, config, logger = console, fetchImpl = f
   let timer = null;
   let running = false;
   let stopped = false;
+  let providerBackoffUntil = 0;
 
   const processNext = async () => {
-    if (running || stopped) return false;
+    if (running || stopped || Date.now() < providerBackoffUntil) return false;
     running = true;
     try {
-      const message = await claimNext(db);
+      const message = await claimNext(db, config);
       if (!message) return false;
       try {
         const providerCredential = await resolveCredential(db, config, message.credential_ref);
@@ -154,6 +207,9 @@ export function createOutboxWorker({ db, config, logger = console, fetchImpl = f
            updated_at = now() WHERE id = $1`,
           [message.id, delivered.providerMessageId, JSON.stringify(delivered.response || {})],
         );
+        if (delivered.providerBackoffSeconds > 0) {
+          providerBackoffUntil = Date.now() + delivered.providerBackoffSeconds * 1000;
+        }
         try {
           await mirrorOutboundToChatwoot({
             db,
@@ -175,6 +231,9 @@ export function createOutboxWorker({ db, config, logger = console, fetchImpl = f
         return true;
       } catch (error) {
         await markFailure(db, message, error);
+        if (error.retryAfterSeconds > 0) {
+          providerBackoffUntil = Date.now() + error.retryAfterSeconds * 1000;
+        }
         logger.error?.({ err: error, outboxMessageId: message.id }, 'Meta outbox delivery failed');
         return true;
       }

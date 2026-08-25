@@ -19,6 +19,7 @@ import { createChatwootPlatform } from './chatwoot-platform.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { metaPublicRoutes, metaTenantRoutes } from './meta/gateway.js';
 import { metaOAuthPublicRoutes, metaOAuthTenantRoutes } from './meta/oauth.js';
+import { metaComplianceRoutes } from './meta/compliance.js';
 
 const SENSITIVE_QUERY_PARAMETERS = new Set([
   'access_token',
@@ -60,16 +61,26 @@ export function createApp({ config, db, redis }) {
   app.use(pinoHttp({
     serializers: { req: requestSerializer },
   }));
+  app.use((_req, res, next) => {
+    res.header('X-Content-Type-Options', 'nosniff');
+    res.header('Referrer-Policy', 'no-referrer');
+    res.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.header('Cross-Origin-Resource-Policy', 'same-site');
+    res.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    next();
+  });
   app.use(express.json({
     limit: '1mb',
     verify(req, _res, buffer) { req.rawBody = Buffer.from(buffer); },
   }));
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', config.CORS_ORIGIN);
+    const origin = req.header('origin');
+    const originAllowed = !origin || origin === config.CORS_ORIGIN;
+    if (origin && originAllowed) res.header('Access-Control-Allow-Origin', config.CORS_ORIGIN);
     res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Request-Id');
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
     res.header('Vary', 'Origin');
-    if (req.method === 'OPTIONS') return res.sendStatus(204);
+    if (req.method === 'OPTIONS') return originAllowed ? res.sendStatus(204) : res.sendStatus(403);
     return next();
   });
 
@@ -83,6 +94,7 @@ export function createApp({ config, db, redis }) {
   app.use(webhookRoutes({ db, config, redis }));
   app.use(metaPublicRoutes({ db, config }));
   app.use(metaOAuthPublicRoutes({ db, config }));
+  app.use(metaComplianceRoutes({ db, config }));
 
   app.use('/v1', createAuth(config));
   app.use('/v1', requireActiveOperator(db));
